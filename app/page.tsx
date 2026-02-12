@@ -74,7 +74,7 @@ export default function Home() {
   }, [circuitCode]);
 
   return (
-    <div className="h-screen flex flex-col blueprint-grid">
+    <div className="h-dvh flex flex-col blueprint-grid">
       <header className="flex items-center justify-between px-5 py-3 border-b border-[#1a2236] bg-[#060a12]/90 backdrop-blur-sm z-10">
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1.5">
@@ -94,7 +94,7 @@ export default function Home() {
           )}
           {isStreaming && (
             <div className="flex items-center gap-1.5">
-              <span className="inline-block w-1.5 h-1.5 bg-[#00d4ff] rounded-full animate-pulse" />
+              <span className="inline-block size-1.5 bg-[#00d4ff] rounded-full animate-pulse" />
               <span className="text-[10px] font-mono text-[#4a6080]">Streaming</span>
             </div>
           )}

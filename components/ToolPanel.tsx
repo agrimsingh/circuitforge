@@ -21,7 +21,7 @@ function ToolEntry({ event }: { event: ToolEvent }) {
     >
       <div className="flex items-center gap-3 px-3 py-2">
         <div
-          className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+          className={`size-1.5 rounded-full shrink-0 ${
             event.status === "running"
               ? "bg-amber-400 animate-pulse"
               : "bg-emerald-400"
@@ -81,7 +81,7 @@ export function ToolPanel({ events }: ToolPanelProps) {
     <div className="flex flex-col h-full bg-[#080c14]">
       <div className="flex items-center gap-2 px-4 py-3 border-b border-[#1a2236]">
         <div
-          className={`w-2 h-2 rounded-full ${
+          className={`size-2 rounded-full ${
             events.some((e) => e.status === "running")
               ? "bg-amber-400 animate-pulse"
               : "bg-[#2a3a54]"

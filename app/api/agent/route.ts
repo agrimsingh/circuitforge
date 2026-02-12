@@ -73,7 +73,7 @@ export async function POST(req: Request) {
             mcpServers: { "circuitforge-tools": circuitforgeTools },
             agents: subagents,
             maxTurns: 20,
-            env: { ANTHROPIC_API_KEY: apiKey },
+            env: { ...process.env, ANTHROPIC_API_KEY: apiKey },
             hooks: {
               PreToolUse: [{
                 hooks: [async (input): Promise<HookJSONOutput> => {

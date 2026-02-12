@@ -15,8 +15,9 @@
 | `app/` | Next.js App Router (pages + API routes) |
 | `components/` | React UI components |
 | `lib/agent/` | Agent SDK config, prompts, tools, models |
-| `lib/export/` | Circuit JSON → manufacturing file conversion |
-| `lib/stream/` | SSE event parsing |
+| `lib/stream/` | SSE event parsing + React hook |
+| `__tests__/` | Integration tests, fixtures, helpers |
+| `vitest.config.mts` | Vitest config (path aliases, env loading, forks pool) |
 
 ## Commands
 
@@ -25,7 +26,10 @@
 | Install | `pnpm install` |
 | Dev | `pnpm dev` |
 | Build | `pnpm build` |
-| Test | `pnpm test` |
+| Test (unit) | `pnpm test` |
+| Test (integration) | `pnpm test:integration` |
+| Test (live SDK) | `pnpm test:sdk` |
+| Test (everything) | `pnpm test:all` |
 | Lint | `pnpm lint` |
 
 ## Code Style
@@ -41,7 +45,7 @@
 2. Check `TODO.md` for current phase and next task.
 3. Read the relevant `specs/*.md` for design context.
 4. Implement following the spec.
-5. Run `npm test` and `npm run lint`.
+5. Run `pnpm test` and `pnpm lint`.
 6. Update `TODO.md` and `docs/quality.md`.
 
 ## Environment Variables

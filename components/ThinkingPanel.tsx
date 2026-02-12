@@ -20,7 +20,7 @@ export function ThinkingPanel({ text, isStreaming }: ThinkingPanelProps) {
     <div className="flex flex-col h-full bg-[#080c14]">
       <div className="flex items-center gap-2 px-4 py-3 border-b border-[#1a2236]">
         <div
-          className={`w-2 h-2 rounded-full ${
+          className={`size-2 rounded-full ${
             isStreaming && text ? "bg-amber-400 animate-pulse" : "bg-[#2a3a54]"
           }`}
         />

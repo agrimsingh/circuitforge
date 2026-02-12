@@ -58,7 +58,15 @@ Each SSE event is `data: <JSON>\n\n` with the following types:
 - Agent SDK errors → streamed as `{ "type": "error" }` events
 - Request timeout → 300s max (Vercel Pro plan)
 
+## Important: Environment Variables
+The SDK's `env` option **replaces** `process.env` for the spawned subprocess — it does not merge. The route must pass the full environment:
+```ts
+env: { ...process.env, ANTHROPIC_API_KEY: apiKey }
+```
+Passing only `{ ANTHROPIC_API_KEY: apiKey }` strips PATH, causing `spawn node ENOENT`.
+
 ## Design Decisions
 - **Why ephemeral sessions**: Simplicity for MVP. Multi-turn is handled by sending previous code as context.
 - **Why bypassPermissions**: Server-controlled agent with no interactive user. All tools are safe (read-only + jlcsearch).
 - **Why in-process MCP**: Avoids stdio subprocess overhead on Vercel serverless.
+- **Why SDK tests run outside vitest**: The Agent SDK spawns subprocesses via `child_process.spawn()`. Vitest uses worker threads which cannot manage grandchild processes. Live SDK tests run as standalone scripts via `tsx`.

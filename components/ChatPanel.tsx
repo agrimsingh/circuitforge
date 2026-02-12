@@ -32,7 +32,7 @@ export function ChatPanel({ messages, isStreaming, onSend, onStop }: ChatPanelPr
   return (
     <div className="flex flex-col h-full bg-[#0a0e17]">
       <div className="flex items-center gap-2 px-4 py-3 border-b border-[#1a2236]">
-        <div className="w-2 h-2 rounded-full bg-[#00d4ff] animate-pulse" />
+        <div className="size-2 rounded-full bg-[#00d4ff] animate-pulse" />
         <span className="text-xs font-mono uppercase tracking-widest text-[#4a6080]">
           Chat
         </span>
@@ -72,7 +72,7 @@ export function ChatPanel({ messages, isStreaming, onSend, onStop }: ChatPanelPr
 
         {isStreaming && (
           <div className="flex items-center gap-2 text-xs text-[#00d4ff]">
-            <span className="inline-block w-1.5 h-1.5 bg-[#00d4ff] rounded-full animate-pulse" />
+            <span className="inline-block size-1.5 bg-[#00d4ff] rounded-full animate-pulse" />
             CircuitForge is thinking...
           </div>
         )}
