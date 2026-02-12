@@ -22,11 +22,11 @@
 
 | Task | Command |
 |------|---------|
-| Install | `npm install` |
-| Dev | `npm run dev` |
-| Build | `npm run build` |
-| Test | `npm test` |
-| Lint | `npm run lint` |
+| Install | `pnpm install` |
+| Dev | `pnpm dev` |
+| Build | `pnpm build` |
+| Test | `pnpm test` |
+| Lint | `pnpm lint` |
 
 ## Code Style
 
