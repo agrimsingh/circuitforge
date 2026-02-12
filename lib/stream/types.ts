@@ -1,4 +1,3 @@
-/** SSE event types emitted by /api/agent */
 export type SSEEvent =
   | { type: "text"; content: string }
   | { type: "thinking"; content: string }
@@ -10,9 +9,7 @@ export type SSEEvent =
   | { type: "error"; message: string }
   | { type: "done"; usage?: { total_cost_usd?: number } };
 
-/** Request body for POST /api/agent */
 export interface AgentRequest {
   prompt: string;
-  /** Previous tscircuit code to provide as context for follow-up prompts */
   previousCode?: string;
 }

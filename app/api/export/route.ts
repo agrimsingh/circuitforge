@@ -5,9 +5,7 @@ import {
   stringifyExcellonDrill,
 } from "circuit-json-to-gerber";
 import { convertCircuitJsonToBomRows, convertBomRowsToCsv } from "circuit-json-to-bom-csv";
-import {
-  convertCircuitJsonToPickAndPlaceCsv,
-} from "circuit-json-to-pnp-csv";
+import { convertCircuitJsonToPickAndPlaceCsv } from "circuit-json-to-pnp-csv";
 import JSZip from "jszip";
 
 export const runtime = "nodejs";
@@ -30,62 +28,44 @@ export async function POST(req: Request) {
     );
   }
 
-  const circuitJson = body.circuit_json;
+  const soup = body.circuit_json;
 
   try {
     const zip = new JSZip();
-    const gerbersFolder = zip.folder("gerbers")!;
+    const gerbers = zip.folder("gerbers")!;
 
-    // --- Gerber files ---
-    const gerberCommands = convertSoupToGerberCommands(circuitJson as never);
-    const gerberLayers = stringifyGerberCommandLayers(gerberCommands as never);
-    for (const [layerName, content] of Object.entries(gerberLayers)) {
-      gerbersFolder.file(`${layerName}.gbr`, content as string);
+    const gerberCommands = convertSoupToGerberCommands(soup as never);
+    const layers = stringifyGerberCommandLayers(gerberCommands as never);
+    for (const [name, content] of Object.entries(layers)) {
+      gerbers.file(`${name}.gbr`, content as string);
     }
 
-    // --- Drill files ---
     try {
-      const platedDrill = convertSoupToExcellonDrillCommands({
-        circuitJson: circuitJson as never,
-        is_plated: true,
-      });
-      gerbersFolder.file("plated.drl", stringifyExcellonDrill(platedDrill as never));
+      const drill = convertSoupToExcellonDrillCommands({ circuitJson: soup as never, is_plated: true });
+      gerbers.file("plated.drl", stringifyExcellonDrill(drill as never));
+    } catch { /* no plated holes */ }
+
+    try {
+      const drill = convertSoupToExcellonDrillCommands({ circuitJson: soup as never, is_plated: false });
+      gerbers.file("unplated.drl", stringifyExcellonDrill(drill as never));
+    } catch { /* no unplated holes */ }
+
+    try {
+      const bomRows = await convertCircuitJsonToBomRows({ circuitJson: soup as never });
+      zip.file("bom.csv", convertBomRowsToCsv(bomRows));
     } catch {
-      // No plated holes — skip
+      zip.file("bom.csv", "# BOM generation failed\n");
     }
 
     try {
-      const unplatedDrill = convertSoupToExcellonDrillCommands({
-        circuitJson: circuitJson as never,
-        is_plated: false,
-      });
-      gerbersFolder.file("unplated.drl", stringifyExcellonDrill(unplatedDrill as never));
-    } catch {
-      // No unplated holes — skip
-    }
-
-    // --- BOM CSV ---
-    try {
-      const bomRows = await convertCircuitJsonToBomRows({
-        circuitJson: circuitJson as never,
-      });
-      const bomCsv = convertBomRowsToCsv(bomRows);
-      zip.file("bom.csv", bomCsv);
-    } catch {
-      zip.file("bom.csv", "# BOM generation failed — circuit may not have source components\n");
-    }
-
-    // --- PNP CSV ---
-    try {
-      const pnpCsv = convertCircuitJsonToPickAndPlaceCsv(circuitJson as never);
-      zip.file("pnp.csv", pnpCsv);
+      zip.file("pnp.csv", convertCircuitJsonToPickAndPlaceCsv(soup as never));
     } catch {
       zip.file("pnp.csv", "# PNP generation failed\n");
     }
 
-    const zipArrayBuffer = await zip.generateAsync({ type: "arraybuffer" });
+    const buffer = await zip.generateAsync({ type: "arraybuffer" });
 
-    return new Response(zipArrayBuffer, {
+    return new Response(buffer, {
       headers: {
         "Content-Type": "application/zip",
         "Content-Disposition": 'attachment; filename="circuitforge-export.zip"',

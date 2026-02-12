@@ -31,7 +31,6 @@ export function ChatPanel({ messages, isStreaming, onSend, onStop }: ChatPanelPr
 
   return (
     <div className="flex flex-col h-full bg-[#0a0e17]">
-      {/* Header */}
       <div className="flex items-center gap-2 px-4 py-3 border-b border-[#1a2236]">
         <div className="w-2 h-2 rounded-full bg-[#00d4ff] animate-pulse" />
         <span className="text-xs font-mono uppercase tracking-widest text-[#4a6080]">
@@ -39,7 +38,6 @@ export function ChatPanel({ messages, isStreaming, onSend, onStop }: ChatPanelPr
         </span>
       </div>
 
-      {/* Messages */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-thin">
         {messages.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full text-center px-6">
@@ -80,7 +78,6 @@ export function ChatPanel({ messages, isStreaming, onSend, onStop }: ChatPanelPr
         )}
       </div>
 
-      {/* Input */}
       <form onSubmit={handleSubmit} className="p-3 border-t border-[#1a2236]">
         <div className="flex gap-2">
           <input

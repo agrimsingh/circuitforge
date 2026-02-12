@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useRef, useEffect } from "react";
 
 type Tab = "code" | "preview";
 
@@ -10,40 +10,13 @@ interface CircuitPanelProps {
   isExporting: boolean;
 }
 
-/**
- * Renders tscircuit preview using the hosted RunFrame iframe.
- * This avoids pulling in the full tscircuit dependency tree.
- */
 function RunFramePreview({ code }: { code: string }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const readyRef = useRef(false);
 
   useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-      if (event.data?.runframe_type === "runframe_ready_to_receive") {
-        readyRef.current = true;
-        // Send current code
-        iframeRef.current?.contentWindow?.postMessage(
-          {
-            runframe_type: "runframe_props_changed",
-            runframe_props: {
-              fsMap: { "main.tsx": code },
-              entrypoint: "main.tsx",
-            },
-          },
-          "*"
-        );
-      }
-    };
-
-    window.addEventListener("message", handleMessage);
-    return () => window.removeEventListener("message", handleMessage);
-  }, [code]);
-
-  // When code changes and iframe is already ready, send updated code
-  useEffect(() => {
-    if (readyRef.current && iframeRef.current?.contentWindow) {
-      iframeRef.current.contentWindow.postMessage(
+    function sendCode() {
+      iframeRef.current?.contentWindow?.postMessage(
         {
           runframe_type: "runframe_props_changed",
           runframe_props: {
@@ -54,6 +27,18 @@ function RunFramePreview({ code }: { code: string }) {
         "*"
       );
     }
+
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data?.runframe_type === "runframe_ready_to_receive") {
+        readyRef.current = true;
+        sendCode();
+      }
+    };
+
+    window.addEventListener("message", handleMessage);
+    if (readyRef.current) sendCode();
+
+    return () => window.removeEventListener("message", handleMessage);
   }, [code]);
 
   return (
@@ -69,13 +54,8 @@ function RunFramePreview({ code }: { code: string }) {
 export function CircuitPanel({ code, onExport, isExporting }: CircuitPanelProps) {
   const [tab, setTab] = useState<Tab>("code");
 
-  const copyCode = useCallback(() => {
-    navigator.clipboard.writeText(code);
-  }, [code]);
-
   return (
     <div className="flex flex-col h-full bg-[#080c14]">
-      {/* Header with tabs */}
       <div className="flex items-center gap-1 px-4 py-2 border-b border-[#1a2236]">
         <div className="flex items-center gap-1 mr-auto">
           {(["code", "preview"] as Tab[]).map((t) => (
@@ -96,7 +76,7 @@ export function CircuitPanel({ code, onExport, isExporting }: CircuitPanelProps)
         {code && (
           <div className="flex items-center gap-1">
             <button
-              onClick={copyCode}
+              onClick={() => navigator.clipboard.writeText(code)}
               className="px-2 py-1 text-[10px] font-mono text-[#4a6080] hover:text-[#94a8c0] border border-[#1a2236] rounded transition-colors"
             >
               Copy
@@ -112,7 +92,6 @@ export function CircuitPanel({ code, onExport, isExporting }: CircuitPanelProps)
         )}
       </div>
 
-      {/* Content */}
       <div className="flex-1 overflow-hidden">
         {!code ? (
           <div className="flex items-center justify-center h-full">

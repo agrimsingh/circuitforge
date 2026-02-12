@@ -79,7 +79,6 @@ export function ToolPanel({ events }: ToolPanelProps) {
 
   return (
     <div className="flex flex-col h-full bg-[#080c14]">
-      {/* Header */}
       <div className="flex items-center gap-2 px-4 py-3 border-b border-[#1a2236]">
         <div
           className={`w-2 h-2 rounded-full ${
@@ -98,7 +97,6 @@ export function ToolPanel({ events }: ToolPanelProps) {
         )}
       </div>
 
-      {/* Events */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-3 space-y-2 scrollbar-thin">
         {events.length === 0 ? (
           <div className="flex items-center justify-center h-full">

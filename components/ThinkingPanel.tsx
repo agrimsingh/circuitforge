@@ -18,7 +18,6 @@ export function ThinkingPanel({ text, isStreaming }: ThinkingPanelProps) {
 
   return (
     <div className="flex flex-col h-full bg-[#080c14]">
-      {/* Header */}
       <div className="flex items-center gap-2 px-4 py-3 border-b border-[#1a2236]">
         <div
           className={`w-2 h-2 rounded-full ${
@@ -30,7 +29,6 @@ export function ThinkingPanel({ text, isStreaming }: ThinkingPanelProps) {
         </span>
       </div>
 
-      {/* Content */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 scrollbar-thin">
         {text ? (
           <pre className="text-xs font-mono text-[#5a7090] whitespace-pre-wrap leading-relaxed">

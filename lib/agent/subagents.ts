@@ -1,15 +1,9 @@
 import type { AgentDefinition } from "@anthropic-ai/claude-agent-sdk";
 
-/**
- * Subagent definitions for CircuitForge.
- *
- * The orchestrator delegates focused tasks to these specialized agents.
- * Each gets its own context window, tools, and (optionally) model override.
- */
 export const subagents: Record<string, AgentDefinition> = {
   "parts-scout": {
     description:
-      "Component search specialist. Use this agent to find real JLCPCB parts that match design requirements. It has access to the search_parts tool for querying jlcsearch.tscircuit.com.",
+      "Component search specialist. Finds real JLCPCB parts matching design requirements via jlcsearch.",
     prompt: `You are a component sourcing specialist for JLCPCB parts.
 
 When given a component requirement:
@@ -30,7 +24,7 @@ Return your recommendations in a clear, structured format with LCSC codes.`,
 
   "code-writer": {
     description:
-      "tscircuit code generation specialist. Use this agent to write tscircuit JSX code from a validated design plan with selected components.",
+      "tscircuit code generation specialist. Writes tscircuit JSX from a validated design plan with selected components.",
     prompt: `You are a tscircuit code generation specialist.
 
 Given a circuit design plan with specific components (including LCSC codes and footprints), generate clean, complete tscircuit JSX code.
@@ -58,13 +52,13 @@ export default () => (
 - Keep the board size reasonable for the component count
 
 ## Output
-Return ONLY the complete tscircuit code. No explanations needed — the orchestrator will explain the design.`,
+Return ONLY the complete tscircuit code. No explanations needed.`,
     model: "sonnet",
   },
 
   validator: {
     description:
-      "Electronics design validator. Use this agent to review a circuit design for electrical correctness, safety issues, and best practices.",
+      "Electronics design validator. Reviews circuit designs for electrical correctness and best practices.",
     prompt: `You are an expert electronics design reviewer.
 
 Given a circuit design (either as a description or tscircuit code), check for:

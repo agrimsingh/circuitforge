@@ -13,7 +13,7 @@ import { subagents } from "@/lib/agent/subagents";
 import type { SSEEvent, AgentRequest } from "@/lib/stream/types";
 
 export const runtime = "nodejs";
-export const maxDuration = 300; // 5 min max for Vercel Pro
+export const maxDuration = 300;
 
 function sseEncode(event: SSEEvent): string {
   return `data: ${JSON.stringify(event)}\n\n`;
@@ -45,7 +45,6 @@ export async function POST(req: Request) {
     );
   }
 
-  // Build the full prompt with previous code context
   let fullPrompt = body.prompt;
   if (body.previousCode) {
     fullPrompt = `The user previously designed a circuit. Here is the existing tscircuit code:\n\n\`\`\`tsx\n${body.previousCode}\n\`\`\`\n\nThe user now says: ${body.prompt}\n\nModify or extend the existing design based on the user's request.`;
@@ -71,153 +70,81 @@ export async function POST(req: Request) {
               "Task",
               "mcp__circuitforge-tools__search_parts",
             ],
-            mcpServers: {
-              "circuitforge-tools": circuitforgeTools,
-            },
+            mcpServers: { "circuitforge-tools": circuitforgeTools },
             agents: subagents,
             maxTurns: 20,
-            env: {
-              ANTHROPIC_API_KEY: apiKey,
-            },
+            env: { ANTHROPIC_API_KEY: apiKey },
             hooks: {
-              PreToolUse: [
-                {
-                  hooks: [
-                    async (input): Promise<HookJSONOutput> => {
-                      const hookInput = input as PreToolUseHookInput;
-                      controller.enqueue(
-                        encoder.encode(
-                          sseEncode({
-                            type: "tool_start",
-                            tool: hookInput.tool_name,
-                            input: hookInput.tool_input,
-                          })
-                        )
-                      );
-                      return { continue: true };
-                    },
-                  ],
-                },
-              ],
-              PostToolUse: [
-                {
-                  hooks: [
-                    async (input): Promise<HookJSONOutput> => {
-                      const hookInput = input as PostToolUseHookInput;
-                      controller.enqueue(
-                        encoder.encode(
-                          sseEncode({
-                            type: "tool_result",
-                            tool: hookInput.tool_name,
-                            output: hookInput.tool_response,
-                          })
-                        )
-                      );
-                      return { continue: true };
-                    },
-                  ],
-                },
-              ],
-              SubagentStart: [
-                {
-                  hooks: [
-                    async (input): Promise<HookJSONOutput> => {
-                      const hookInput = input as SubagentStartHookInput;
-                      controller.enqueue(
-                        encoder.encode(
-                          sseEncode({
-                            type: "subagent_start",
-                            agent: hookInput.agent_type,
-                          })
-                        )
-                      );
-                      return { continue: true };
-                    },
-                  ],
-                },
-              ],
-              SubagentStop: [
-                {
-                  hooks: [
-                    async (input): Promise<HookJSONOutput> => {
-                      const hookInput = input as SubagentStopHookInput;
-                      controller.enqueue(
-                        encoder.encode(
-                          sseEncode({
-                            type: "subagent_stop",
-                            agent: hookInput.agent_type,
-                          })
-                        )
-                      );
-                      return { continue: true };
-                    },
-                  ],
-                },
-              ],
+              PreToolUse: [{
+                hooks: [async (input): Promise<HookJSONOutput> => {
+                  const h = input as PreToolUseHookInput;
+                  controller.enqueue(encoder.encode(sseEncode({
+                    type: "tool_start", tool: h.tool_name, input: h.tool_input,
+                  })));
+                  return { continue: true };
+                }],
+              }],
+              PostToolUse: [{
+                hooks: [async (input): Promise<HookJSONOutput> => {
+                  const h = input as PostToolUseHookInput;
+                  controller.enqueue(encoder.encode(sseEncode({
+                    type: "tool_result", tool: h.tool_name, output: h.tool_response,
+                  })));
+                  return { continue: true };
+                }],
+              }],
+              SubagentStart: [{
+                hooks: [async (input): Promise<HookJSONOutput> => {
+                  const h = input as SubagentStartHookInput;
+                  controller.enqueue(encoder.encode(sseEncode({
+                    type: "subagent_start", agent: h.agent_type,
+                  })));
+                  return { continue: true };
+                }],
+              }],
+              SubagentStop: [{
+                hooks: [async (input): Promise<HookJSONOutput> => {
+                  const h = input as SubagentStopHookInput;
+                  controller.enqueue(encoder.encode(sseEncode({
+                    type: "subagent_stop", agent: h.agent_type,
+                  })));
+                  return { continue: true };
+                }],
+              }],
             },
           },
         });
 
         for await (const message of agentQuery) {
-          // Stream partial text deltas
-          if (
-            message.type === "stream_event" &&
-            "event" in message
-          ) {
+          if (message.type === "stream_event" && "event" in message) {
             const event = (message as { event: Record<string, unknown> }).event;
+
             if (event.type === "content_block_delta") {
               const delta = event.delta as Record<string, unknown> | undefined;
-              if (
-                delta?.type === "text_delta" &&
-                typeof delta.text === "string"
-              ) {
-                controller.enqueue(
-                  encoder.encode(
-                    sseEncode({ type: "text", content: delta.text })
-                  )
-                );
+              if (delta?.type === "text_delta" && typeof delta.text === "string") {
+                controller.enqueue(encoder.encode(sseEncode({ type: "text", content: delta.text })));
               }
-              if (
-                delta?.type === "thinking_delta" &&
-                typeof delta.thinking === "string"
-              ) {
-                controller.enqueue(
-                  encoder.encode(
-                    sseEncode({ type: "thinking", content: delta.thinking })
-                  )
-                );
+              if (delta?.type === "thinking_delta" && typeof delta.thinking === "string") {
+                controller.enqueue(encoder.encode(sseEncode({ type: "thinking", content: delta.thinking })));
               }
             }
           }
 
-          // Final result
           if (message.type === "result") {
             const result = message as Record<string, unknown>;
-            controller.enqueue(
-              encoder.encode(
-                sseEncode({
-                  type: "done",
-                  usage: {
-                    total_cost_usd:
-                      typeof result.total_cost_usd === "number"
-                        ? result.total_cost_usd
-                        : undefined,
-                  },
-                })
-              )
-            );
+            controller.enqueue(encoder.encode(sseEncode({
+              type: "done",
+              usage: {
+                total_cost_usd: typeof result.total_cost_usd === "number" ? result.total_cost_usd : undefined,
+              },
+            })));
           }
         }
       } catch (error) {
-        controller.enqueue(
-          encoder.encode(
-            sseEncode({
-              type: "error",
-              message:
-                error instanceof Error ? error.message : "Unknown agent error",
-            })
-          )
-        );
+        controller.enqueue(encoder.encode(sseEncode({
+          type: "error",
+          message: error instanceof Error ? error.message : "Unknown agent error",
+        })));
       } finally {
         controller.close();
       }

@@ -38,17 +38,15 @@ const initialState: AgentStreamState = {
   costUsd: null,
 };
 
-/**
- * Extracts tsx code blocks from streamed text.
- * Returns the last complete tsx code block found.
- */
+const CODE_BLOCK_RE = /```tsx\n([\s\S]*?)```/g;
+
 function extractCodeFromText(text: string): string | null {
-  const codeBlockRegex = /```tsx\n([\s\S]*?)```/g;
   let lastMatch: string | null = null;
   let match;
-  while ((match = codeBlockRegex.exec(text)) !== null) {
+  while ((match = CODE_BLOCK_RE.exec(text)) !== null) {
     lastMatch = match[1].trim();
   }
+  CODE_BLOCK_RE.lastIndex = 0;
   return lastMatch;
 }
 
@@ -60,7 +58,6 @@ export function useAgentStream() {
 
   const sendPrompt = useCallback(
     async (prompt: string, previousCode?: string) => {
-      // Abort any in-flight request
       abortRef.current?.abort();
       const controller = new AbortController();
       abortRef.current = controller;
@@ -70,10 +67,7 @@ export function useAgentStream() {
 
       setState((prev) => ({
         ...prev,
-        messages: [
-          ...prev.messages,
-          { role: "user", content: prompt },
-        ],
+        messages: [...prev.messages, { role: "user", content: prompt }],
         thinkingText: "",
         toolEvents: [],
         isStreaming: true,
@@ -108,10 +102,8 @@ export function useAgentStream() {
           if (done) break;
 
           buffer += decoder.decode(value, { stream: true });
-
-          // Process complete SSE events
           const lines = buffer.split("\n");
-          buffer = lines.pop() ?? ""; // Keep incomplete last line
+          buffer = lines.pop() ?? "";
 
           for (const line of lines) {
             if (!line.startsWith("data: ")) continue;
@@ -174,12 +166,8 @@ export function useAgentStream() {
               case "tool_result": {
                 setState((prev) => {
                   const events = [...prev.toolEvents];
-                  // Find the last running event for this tool
                   for (let i = events.length - 1; i >= 0; i--) {
-                    if (
-                      events[i].tool === event.tool &&
-                      events[i].status === "running"
-                    ) {
+                    if (events[i].tool === event.tool && events[i].status === "running") {
                       events[i] = {
                         ...events[i],
                         status: "done",
@@ -215,10 +203,7 @@ export function useAgentStream() {
                 setState((prev) => {
                   const events = [...prev.toolEvents];
                   for (let i = events.length - 1; i >= 0; i--) {
-                    if (
-                      events[i].tool.includes(event.agent) &&
-                      events[i].status === "running"
-                    ) {
+                    if (events[i].tool.includes(event.agent) && events[i].status === "running") {
                       events[i] = {
                         ...events[i],
                         status: "done",
@@ -253,7 +238,6 @@ export function useAgentStream() {
           }
         }
 
-        // If stream ends without a done event
         setState((prev) =>
           prev.isStreaming ? { ...prev, isStreaming: false } : prev
         );
