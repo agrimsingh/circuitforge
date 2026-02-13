@@ -6,7 +6,7 @@ Last updated: 2026-02-13
 
 | Domain | Spec | Code | Tests | Review | Overall |
 |--------|------|------|-------|--------|---------|
-| Agent Backend | B | B | C | C | B |
+| Agent Backend | B | B | B | C | B |
 | Frontend UI | C | B | F | C | C |
 | Parts Search | B | B | B | C | B |
 | Export Pipeline | C | C | B | F | C |
@@ -16,13 +16,13 @@ Last updated: 2026-02-13
 
 | Layer | Grade | Notes |
 |-------|-------|-------|
-| Error Handling | C | Route validation tested, SDK errors streamed, runtime type checks |
+| Error Handling | B | Route validation tested, SDK errors streamed, backend self-correction loop with compile diagnostics |
 | Security | D | API key server-side only, validated in tests |
-| Observability | D | Activity log surfaces thinking + tool calls in UI |
+| Observability | C | Activity log includes retry telemetry and InfoPanel now shows retry summary (attempts, first error, category counts, final status) |
 | Performance | F | Not started |
 | CI | F | Not started — test scripts exist but no CI pipeline |
 | Documentation | B | Architecture, plans, quality scorecard reflect reality |
-| Testing | C | 46 tests across 3 tiers (unit/integration/SDK) |
+| Testing | C | 57 tests across 3 tiers (unit/integration/SDK) |
 
 ## Grade Scale
 - **A**: Production-ready, well-tested, reviewed
@@ -40,11 +40,17 @@ Last updated: 2026-02-13
 | No CI pipeline | High | Set up GitHub Actions |
 | No error boundaries in UI | Medium | Next iteration |
 | No rate limiting | Medium | Post-MVP |
-| No persistence | Low | Post-MVP |
+| Convex persistence depends on secret parity across Next + Convex | Low | Keep `CIRCUITFORGE_CONVEX_SHARED_SECRET` synchronized and add health check badge |
 | Board sizing still imperfect | Medium | Refine largestHalf heuristic, consider server-side validation |
 | Part search noisy for unknown MPNs | Medium | Better WebSearch→MPN pipeline |
+| Retry loop can still terminate with unresolved diagnostics | Medium | Add deeper validator subagent pass + longer horizon attempts in sandbox worker |
 
 ## Score History
 - 2026-02-13: Initial scaffold — all F/D grades
 - 2026-02-13: Comprehensive test suite added (55 tests, 3 tiers). Agent backend, parts search, export all upgraded to C. Testing layer added at C.
 - 2026-02-13: Major UX overhaul — merged panels into 3-panel layout, removed code tab, added thinking/activity streaming, hardened agent prompts (layout rules, footprint catalog, dynamic board sizing, schematic conventions), deslop pass. Agent backend → B, Frontend → C, Prompt Engineering added at C.
+- 2026-02-13: Vercel Sandbox SDK scaffolded with smoke-test route and unit tests. Test count now 49 across app-owned suites.
+- 2026-02-13: Added backend self-correction loop (compile validation + structured diagnostic retries + stagnation stop) and shared code extraction utility. Test count now 52.
+- 2026-02-13: Added preventive DRC guardrails for trace/via failures and surfaced retry telemetry summary in InfoPanel.
+- 2026-02-13: Added in-memory adaptive error memory (rolling failed-attempt categories) to auto-prioritize guardrails for recurring failures. Test count now 55.
+- 2026-02-13: Added Convex-backed persistent self-learning memory (HTTP actions + fallback to in-memory). Test count now 57.

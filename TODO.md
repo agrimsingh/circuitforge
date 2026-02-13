@@ -46,6 +46,11 @@
 
 ## Phase 5: Polish (next)
 - [ ] Error handling and boundaries
+- [x] Agent self-correction loop (compile + diagnostics + retry/stagnation policy)
+- [x] Retry telemetry surfaced in InfoPanel activity tab
+- [x] Preventive routing guardrails for recurring trace/via DRC failures
+- [x] Adaptive error memory for recurring failure classes (rolling prompt guardrails)
+- [x] Convex-backed persistent error memory (with in-memory fallback)
 - [ ] Loading states and animations
 - [ ] Mobile-responsive considerations
 - [ ] React component tests (Testing Library)
@@ -55,5 +60,6 @@
 ## Phase 6: Deploy
 - [ ] CI pipeline (GitHub Actions — run `pnpm test` + `pnpm test:integration`)
 - [ ] Vercel deployment configuration
-- [ ] README with setup instructions
+- [x] Vercel Sandbox SDK scaffold + smoke test endpoint (`/api/sandbox/quickstart`)
+- [x] README with setup instructions
 - [ ] Demo recording prep

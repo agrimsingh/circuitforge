@@ -6,14 +6,17 @@
 
 | Path | What |
 |------|------|
+| `README.md` | Setup, local runbook, and optional Convex persistence guide |
 | `docs/architecture.md` | System overview, tech stack, data flow |
 | `docs/core-beliefs.md` | Agent operating principles |
 | `docs/quality.md` | Living quality scorecard |
 | `docs/plans/active/` | In-progress execution plans |
+| `docs/plans/completed/` | Archived execution plans and retrospectives |
 | `specs/` | System specifications (see `specs/README.md`) |
 | `.agents/workflows/` | Task-specific workflows |
 | `app/` | Next.js App Router (pages + API routes) |
 | `components/` | React UI components |
+| `convex/` | Convex schema + HTTP actions for persistent self-learning memory |
 | `lib/agent/` | Agent SDK config, prompts, tools, models |
 | `lib/stream/` | SSE event parsing + React hook |
 | `__tests__/` | Integration tests, fixtures, helpers |
@@ -31,6 +34,8 @@
 | Test (live SDK) | `pnpm test:sdk` |
 | Test (everything) | `pnpm test:all` |
 | Lint | `pnpm lint` |
+| Convex dev | `pnpm convex:dev` |
+| Convex deploy | `pnpm convex:deploy` |
 
 ## Code Style
 
@@ -69,3 +74,7 @@ If you're unsure whether a doc needs updating, it probably does. Stale docs are 
 |----------|----------|-------------|
 | `ANTHROPIC_API_KEY` | Yes | Anthropic API key (server-side only) |
 | `BLOB_READ_WRITE_TOKEN` | No | Vercel Blob for export artifacts |
+| `VERCEL_OIDC_TOKEN` | No | Vercel Sandbox auth token for local/dev |
+| `CONVEX_SITE_URL` | No | Convex deployment URL for persistent error memory HTTP actions |
+| `NEXT_PUBLIC_CONVEX_SITE_URL` | No | Convex HTTP Actions URL (accepted fallback for persistence) |
+| `CIRCUITFORGE_CONVEX_SHARED_SECRET` | No | Shared secret between Next route and Convex HTTP actions |

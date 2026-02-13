@@ -59,6 +59,7 @@ export default () => (
 - ALWAYS use explicit pcbX/pcbY AND schX/schY placement on every component. Group by functional block (power left, MCU center, peripherals right). Never leave components at default positions.
 - For MCUs: show ALL pins in schPinArrangement. VCC/VDD on topSide, GND on bottomSide, inputs left, outputs right.
 - NEVER hardcode board dimensions. Compute them in code from component positions (define positions in a \`pos\` object, compute board width/height from extents + 20mm margin per side).
+- Route conservatively to avoid known DRC failures: keep unrelated traces separated (target >=0.25mm), avoid trace overlap/crossing hotspots, and keep different-net vias apart (target >=0.8mm).
 - Output the code as a complete, self-contained file.
 
 ## Output Format

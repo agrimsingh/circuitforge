@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useRef } from "react";
 import type { SSEEvent } from "./types";
+import { extractCodeFromText, stripCodeBlocks } from "@/lib/agent/code";
 
 export interface AgentMessage {
   role: "user" | "assistant";
@@ -18,6 +19,17 @@ export interface ToolEvent {
   finishedAt?: number;
 }
 
+export interface RetryTelemetry {
+  maxAttempts: number;
+  attemptsSeen: number;
+  diagnosticsTotal: number;
+  diagnosticsByCategory: Record<string, number>;
+  firstErrorCategory: string | null;
+  finalStatus: "clean" | "retrying" | "failed" | null;
+  finalAttempt: number;
+  finalReason: string | null;
+}
+
 export interface AgentStreamState {
   messages: AgentMessage[];
   thinkingText: string;
@@ -26,6 +38,24 @@ export interface AgentStreamState {
   isStreaming: boolean;
   error: string | null;
   costUsd: number | null;
+  retryTelemetry: RetryTelemetry | null;
+}
+
+function createRetryTelemetry(): RetryTelemetry {
+  return {
+    maxAttempts: 0,
+    attemptsSeen: 0,
+    diagnosticsTotal: 0,
+    diagnosticsByCategory: {},
+    firstErrorCategory: null,
+    finalStatus: null,
+    finalAttempt: 0,
+    finalReason: null,
+  };
+}
+
+function ensureRetryTelemetry(current: RetryTelemetry | null) {
+  return current ?? createRetryTelemetry();
 }
 
 const initialState: AgentStreamState = {
@@ -36,28 +66,8 @@ const initialState: AgentStreamState = {
   isStreaming: false,
   error: null,
   costUsd: null,
+  retryTelemetry: null,
 };
-
-const CODE_BLOCK_RE = /```tsx\n([\s\S]*?)```/g;
-
-function extractCodeFromText(text: string): string | null {
-  let lastMatch: string | null = null;
-  let match;
-  while ((match = CODE_BLOCK_RE.exec(text)) !== null) {
-    lastMatch = match[1].trim();
-  }
-  CODE_BLOCK_RE.lastIndex = 0;
-  return lastMatch;
-}
-
-function stripCodeBlocks(text: string): string {
-  let result = text.replace(CODE_BLOCK_RE, "\n[Circuit code generated — see Code tab]\n");
-  const openIdx = result.indexOf("```tsx\n");
-  if (openIdx !== -1) {
-    result = result.slice(0, openIdx) + "\n[Generating circuit code...]";
-  }
-  return result.trim();
-}
 
 export function useAgentStream() {
   const [state, setState] = useState<AgentStreamState>(initialState);
@@ -89,6 +99,7 @@ export function useAgentStream() {
         isStreaming: true,
         error: null,
         costUsd: null,
+        retryTelemetry: createRetryTelemetry(),
       }));
 
       try {
@@ -258,6 +269,62 @@ export function useAgentStream() {
                   ...prev,
                   isStreaming: false,
                   costUsd: event.usage?.total_cost_usd ?? null,
+                }));
+                break;
+              }
+
+              case "retry_start": {
+                appendActivity(`↻ Retry attempt ${event.attempt}/${event.maxAttempts}`);
+                setState((prev) => ({
+                  ...prev,
+                  retryTelemetry: {
+                    ...ensureRetryTelemetry(prev.retryTelemetry),
+                    maxAttempts: event.maxAttempts,
+                    attemptsSeen: Math.max(prev.retryTelemetry?.attemptsSeen ?? 0, event.attempt),
+                  },
+                }));
+                break;
+              }
+
+              case "validation_errors": {
+                appendActivity(`⚠ Validation: ${event.diagnostics.length} issue(s)`);
+                setState((prev) => {
+                  const current = ensureRetryTelemetry(prev.retryTelemetry);
+
+                  const diagnosticsByCategory = { ...current.diagnosticsByCategory };
+                  for (const diagnostic of event.diagnostics) {
+                    diagnosticsByCategory[diagnostic.category] =
+                      (diagnosticsByCategory[diagnostic.category] ?? 0) + 1;
+                  }
+
+                  return {
+                    ...prev,
+                    retryTelemetry: {
+                      ...current,
+                      diagnosticsTotal: current.diagnosticsTotal + event.diagnostics.length,
+                      diagnosticsByCategory,
+                      firstErrorCategory:
+                        current.firstErrorCategory ??
+                        event.diagnostics[0]?.category ??
+                        null,
+                    },
+                  };
+                });
+                break;
+              }
+
+              case "retry_result": {
+                appendActivity(
+                  `↻ Attempt ${event.attempt}: ${event.status} (${event.diagnosticsCount} issue(s))`
+                );
+                setState((prev) => ({
+                  ...prev,
+                  retryTelemetry: {
+                    ...ensureRetryTelemetry(prev.retryTelemetry),
+                    finalStatus: event.status,
+                    finalAttempt: event.attempt,
+                    finalReason: event.reason ?? null,
+                  },
                 }));
                 break;
               }

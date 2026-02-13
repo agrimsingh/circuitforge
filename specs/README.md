@@ -2,8 +2,8 @@
 
 | Spec | Status | Verified | Description |
 |------|--------|----------|-------------|
-| [agent-backend](./agent-backend.md) | Needs Update | Partial (2026-02-13) | Agent SDK integration, streaming, hooks, subagents |
-| [frontend-ui](./frontend-ui.md) | Implemented | No | 4-panel streaming UI with live circuit preview |
+| [agent-backend](./agent-backend.md) | Implemented | Yes (2026-02-13) | Agent SDK integration, SSE streaming, retry loop, adaptive memory |
+| [frontend-ui](./frontend-ui.md) | Implemented | Yes (2026-02-13) | 3-panel UI with live preview and retry telemetry |
 | [parts-search](./parts-search.md) | Implemented | Partial (2026-02-13) | JLCPCB parts search via jlcsearch API |
 | [export](./export.md) | Implemented | Partial (2026-02-13) | Circuit JSON → manufacturing files (BOM/Gerbers/PNP) |
 | [testing-strategy](./testing-strategy.md) | Implemented | Yes (2026-02-13) | Testing approach — 3-tier pyramid with live SDK tests |

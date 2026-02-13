@@ -6,7 +6,13 @@ Build a working demo of CircuitForge: prompt → agent reasoning → parts searc
 ## Current State
 - Full-stack MVP functional: prompt → agent → parts search → tscircuit code → live preview → export
 - 3-panel UI: Chat | Preview | Activity+Tools (tabbed)
-- 46 tests passing across unit, integration, and SDK tiers
+- 57 tests passing across unit, integration, and SDK tiers
+- Vercel Sandbox SDK integrated with smoke-test endpoint (`POST /api/sandbox/quickstart`)
+- Agent backend now runs a self-correction loop (compile validation + retry prompts from diagnostics)
+- Preventive routing guardrails added for recurring trace/via DRC failures
+- InfoPanel now surfaces retry telemetry summary for live debugging
+- Backend now persists adaptive self-learning memory via Convex HTTP actions (with in-memory fallback when unset)
+- Root README now documents local setup, optional Convex persistence, and sandbox auth setup
 
 ## Plan of Work
 1. ~~Initialize Next.js with TypeScript, Tailwind, App Router~~
@@ -17,9 +23,10 @@ Build a working demo of CircuitForge: prompt → agent reasoning → parts searc
 6. ~~Build export pipeline (compile API → server conversion → zip)~~
 7. ~~Polish UI with blueprint-noir aesthetic~~
 8. ~~Add minimal tests~~
-9. Harden agent prompt engineering (layout, part search quality)
+9. ~~Harden agent prompt engineering (layout, part search quality)~~
 10. Add CI pipeline (GitHub Actions)
 11. E2E browser tests (Playwright)
+12. Improve retry loop convergence rate for complex PCB violations
 
 ## Milestones
 1. **Agent streams text** — Can send prompt, receive streaming SSE response
@@ -45,3 +52,4 @@ Build a working demo of CircuitForge: prompt → agent reasoning → parts searc
 - Part search can still be noisy for unfamiliar components (description-based search fallback)
 - No CI — tests run locally only
 - Schematic/PCB layout quality depends heavily on prompt adherence
+- Retry loop can still fail closed when diagnostic signatures stagnate

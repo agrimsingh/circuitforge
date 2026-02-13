@@ -43,3 +43,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# convex
+convex/.convex/
+convex/_generated/
+.env*.local

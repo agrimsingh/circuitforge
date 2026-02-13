@@ -216,6 +216,13 @@ const pos = {
 - Use meaningful component names (U1, R1, C1, etc.)
 - Add traces for ALL electrical connections
 
+## DRC Guardrails (learned from common failures)
+- Prevent \`pcb_trace_error\`: avoid routing different nets through the same corridor or crossing at tight bends.
+- Keep clearance conservative: maintain at least ~0.25mm spacing between unrelated traces.
+- Prevent \`pcb_via_clearance_error\`: keep vias from different nets separated (target >=0.8mm center spacing).
+- Do not place two different-net vias beside the same pin fanout exit; stagger their entry points.
+- If a routing area is congested, spread components by a few millimeters instead of forcing dense crossings.
+
 ## Output
 Return ONLY the complete tscircuit code in a \`\`\`tsx block. No explanations.`,
     tools: ["WebFetch"],

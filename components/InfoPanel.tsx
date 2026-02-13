@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useEffect, useState } from "react";
-import type { ToolEvent } from "@/lib/stream/useAgentStream";
+import type { ToolEvent, RetryTelemetry } from "@/lib/stream/useAgentStream";
 
 type Tab = "activity" | "tools";
 
@@ -9,6 +9,11 @@ interface InfoPanelProps {
   activityText: string;
   toolEvents: ToolEvent[];
   isStreaming: boolean;
+  retryTelemetry: RetryTelemetry | null;
+}
+
+function formatCategoryLabel(category: string) {
+  return category.replaceAll("_", " ");
 }
 
 function ToolEntry({ event }: { event: ToolEvent }) {
@@ -75,6 +80,7 @@ export function InfoPanel({
   activityText,
   toolEvents,
   isStreaming,
+  retryTelemetry,
 }: InfoPanelProps) {
   const [tab, setTab] = useState<Tab>("activity");
   const activityScrollRef = useRef<HTMLDivElement>(null);
@@ -137,9 +143,46 @@ export function InfoPanel({
             className="h-full overflow-y-auto p-4 scrollbar-thin"
           >
             {activityText ? (
-              <pre className="text-xs font-mono text-[#5a7090] whitespace-pre-wrap leading-relaxed">
-                {activityText}
-              </pre>
+              <div className="space-y-3">
+                {retryTelemetry && retryTelemetry.attemptsSeen > 0 && (
+                  <div className="border border-[#1a2236] rounded-md p-2 bg-[#0b1322]">
+                    <div className="text-[10px] font-mono uppercase tracking-wider text-[#4a6080] mb-1">
+                      Retry Telemetry
+                    </div>
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] font-mono text-[#88a3c5]">
+                      <span>
+                        Attempts: {retryTelemetry.attemptsSeen}/
+                        {retryTelemetry.maxAttempts || "?"}
+                      </span>
+                      <span>Status: {retryTelemetry.finalStatus ?? "running"}</span>
+                      <span>Total diagnostics: {retryTelemetry.diagnosticsTotal}</span>
+                      <span>
+                        First error:{" "}
+                        {retryTelemetry.firstErrorCategory
+                          ? formatCategoryLabel(retryTelemetry.firstErrorCategory)
+                          : "none"}
+                      </span>
+                      {retryTelemetry.finalReason && (
+                        <span className="col-span-2">
+                          Stop reason: {retryTelemetry.finalReason}
+                        </span>
+                      )}
+                      {Object.keys(retryTelemetry.diagnosticsByCategory).length > 0 && (
+                        <span className="col-span-2">
+                          Categories:{" "}
+                          {Object.entries(retryTelemetry.diagnosticsByCategory)
+                            .sort((a, b) => b[1] - a[1])
+                            .map(([category, count]) => `${formatCategoryLabel(category)} (${count})`)
+                            .join(", ")}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
+                <pre className="text-xs font-mono text-[#5a7090] whitespace-pre-wrap leading-relaxed">
+                  {activityText}
+                </pre>
+              </div>
             ) : (
               <div className="flex items-center justify-center h-full">
                 <p className="text-xs text-[#2a3a54] font-mono">

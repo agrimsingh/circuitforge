@@ -16,6 +16,7 @@ export default function Home() {
     isStreaming,
     error,
     costUsd,
+    retryTelemetry,
     sendPrompt,
     stop,
   } = useAgentStream();
@@ -135,6 +136,7 @@ export default function Home() {
                   activityText={thinkingText}
                   toolEvents={toolEvents}
                   isStreaming={isStreaming}
+                  retryTelemetry={retryTelemetry}
                 />
               </Panel>
             </Group>
