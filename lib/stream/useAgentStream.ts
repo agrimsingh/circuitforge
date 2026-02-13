@@ -50,11 +50,26 @@ function extractCodeFromText(text: string): string | null {
   return lastMatch;
 }
 
+function stripCodeBlocks(text: string): string {
+  let result = text.replace(CODE_BLOCK_RE, "\n[Circuit code generated — see Code tab]\n");
+  const openIdx = result.indexOf("```tsx\n");
+  if (openIdx !== -1) {
+    result = result.slice(0, openIdx) + "\n[Generating circuit code...]";
+  }
+  return result.trim();
+}
+
 export function useAgentStream() {
   const [state, setState] = useState<AgentStreamState>(initialState);
   const abortRef = useRef<AbortController | null>(null);
   const accumulatedTextRef = useRef("");
+  const activityLogRef = useRef("");
   const toolCounterRef = useRef(0);
+
+  const appendActivity = (line: string) => {
+    activityLogRef.current += `${line}\n`;
+    setState((prev) => ({ ...prev, thinkingText: activityLogRef.current }));
+  };
 
   const sendPrompt = useCallback(
     async (prompt: string, previousCode?: string) => {
@@ -63,6 +78,7 @@ export function useAgentStream() {
       abortRef.current = controller;
 
       accumulatedTextRef.current = "";
+      activityLogRef.current = "";
       toolCounterRef.current = 0;
 
       setState((prev) => ({
@@ -84,10 +100,11 @@ export function useAgentStream() {
         });
 
         if (!response.ok) {
-          const errBody = await response.json().catch(() => ({}));
+          const errBody: Record<string, unknown> = await response.json().catch(() => ({}));
           throw new Error(
-            (errBody as { error?: string }).error ??
-              `Agent request failed: ${response.status}`
+            typeof errBody.error === "string"
+              ? errBody.error
+              : `Agent request failed: ${response.status}`
           );
         }
 
@@ -121,6 +138,7 @@ export function useAgentStream() {
               case "text": {
                 accumulatedTextRef.current += event.content;
                 const code = extractCodeFromText(accumulatedTextRef.current);
+                const chatContent = stripCodeBlocks(accumulatedTextRef.current);
 
                 setState((prev) => {
                   const msgs = [...prev.messages];
@@ -128,12 +146,12 @@ export function useAgentStream() {
                   if (lastMsg?.role === "assistant") {
                     msgs[msgs.length - 1] = {
                       ...lastMsg,
-                      content: accumulatedTextRef.current,
+                      content: chatContent,
                     };
                   } else {
                     msgs.push({
                       role: "assistant",
-                      content: accumulatedTextRef.current,
+                      content: chatContent,
                     });
                   }
                   return {
@@ -145,7 +163,14 @@ export function useAgentStream() {
                 break;
               }
 
+              case "thinking": {
+                activityLogRef.current += event.content;
+                setState((prev) => ({ ...prev, thinkingText: activityLogRef.current }));
+                break;
+              }
+
               case "tool_start": {
+                appendActivity(`→ ${event.tool}${event.input ? ` (${JSON.stringify(event.input).slice(0, 80)})` : ""}`);
                 const id = `tool-${toolCounterRef.current++}`;
                 setState((prev) => ({
                   ...prev,
@@ -183,6 +208,7 @@ export function useAgentStream() {
               }
 
               case "subagent_start": {
+                appendActivity(`▸ Starting ${event.agent}`);
                 const id = `tool-${toolCounterRef.current++}`;
                 setState((prev) => ({
                   ...prev,
@@ -200,6 +226,7 @@ export function useAgentStream() {
               }
 
               case "subagent_stop": {
+                appendActivity(`✓ ${event.agent} done`);
                 setState((prev) => {
                   const events = [...prev.toolEvents];
                   for (let i = events.length - 1; i >= 0; i--) {
@@ -242,7 +269,7 @@ export function useAgentStream() {
           prev.isStreaming ? { ...prev, isStreaming: false } : prev
         );
       } catch (err) {
-        if ((err as Error).name === "AbortError") return;
+        if (err instanceof DOMException && err.name === "AbortError") return;
         setState((prev) => ({
           ...prev,
           error: err instanceof Error ? err.message : "Unknown error",
@@ -258,11 +285,5 @@ export function useAgentStream() {
     setState((prev) => ({ ...prev, isStreaming: false }));
   }, []);
 
-  const reset = useCallback(() => {
-    abortRef.current?.abort();
-    accumulatedTextRef.current = "";
-    setState(initialState);
-  }, []);
-
-  return { ...state, sendPrompt, stop, reset };
+  return { ...state, sendPrompt, stop };
 }

@@ -60,6 +60,7 @@ export async function POST(req: Request) {
           options: {
             model: MODELS.ORCHESTRATOR,
             systemPrompt: SYSTEM_PROMPT,
+            thinking: { type: "adaptive" },
             includePartialMessages: true,
             persistSession: false,
             permissionMode: "bypassPermissions",

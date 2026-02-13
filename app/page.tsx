@@ -3,8 +3,7 @@
 import { Panel, Group, Separator } from "react-resizable-panels";
 import { useAgentStream } from "@/lib/stream/useAgentStream";
 import { ChatPanel } from "@/components/ChatPanel";
-import { ThinkingPanel } from "@/components/ThinkingPanel";
-import { ToolPanel } from "@/components/ToolPanel";
+import { InfoPanel } from "@/components/InfoPanel";
 import { CircuitPanel } from "@/components/CircuitPanel";
 import { useState, useCallback } from "react";
 
@@ -51,9 +50,9 @@ export default function Home() {
         body: JSON.stringify({ circuit_json }),
       });
       if (!exportRes.ok) {
-        const err = await exportRes.json().catch(() => ({}));
+        const body: Record<string, unknown> = await exportRes.json().catch(() => ({}));
         throw new Error(
-          (err as { error?: string }).error ?? `Export failed: ${exportRes.status}`
+          typeof body.error === "string" ? body.error : `Export failed: ${exportRes.status}`
         );
       }
 
@@ -108,7 +107,7 @@ export default function Home() {
 
       <main className="flex-1 overflow-hidden">
         <Group orientation="horizontal" className="h-full">
-          <Panel defaultSize={38} minSize={25}>
+          <Panel defaultSize={30} minSize={20}>
             <ChatPanel
               messages={messages}
               isStreaming={isStreaming}
@@ -119,25 +118,23 @@ export default function Home() {
 
           <Separator className="w-[3px] hover:bg-[#00d4ff]/10 transition-colors" />
 
-          <Panel defaultSize={62} minSize={35}>
+          <Panel defaultSize={70} minSize={40}>
             <Group orientation="vertical" className="h-full">
-              <Panel defaultSize={25} minSize={10} collapsible>
-                <ThinkingPanel text={thinkingText} isStreaming={isStreaming} />
-              </Panel>
-
-              <Separator className="h-[3px] hover:bg-[#00d4ff]/10 transition-colors" />
-
-              <Panel defaultSize={25} minSize={10} collapsible>
-                <ToolPanel events={toolEvents} />
-              </Panel>
-
-              <Separator className="h-[3px] hover:bg-[#00d4ff]/10 transition-colors" />
-
-              <Panel defaultSize={50} minSize={20}>
+              <Panel defaultSize={70} minSize={30}>
                 <CircuitPanel
                   code={circuitCode}
                   onExport={handleExport}
                   isExporting={isExporting}
+                />
+              </Panel>
+
+              <Separator className="h-[3px] hover:bg-[#00d4ff]/10 transition-colors" />
+
+              <Panel defaultSize={30} minSize={10} collapsible>
+                <InfoPanel
+                  activityText={thinkingText}
+                  toolEvents={toolEvents}
+                  isStreaming={isStreaming}
                 />
               </Panel>
             </Group>

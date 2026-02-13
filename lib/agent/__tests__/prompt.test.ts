@@ -46,6 +46,13 @@ describe("SYSTEM_PROMPT", () => {
   it("requires decoupling capacitors", () => {
     expect(SYSTEM_PROMPT).toContain("decoupling capacitors");
   });
+
+  it("includes key tscircuit rules", () => {
+    expect(SYSTEM_PROMPT).toContain("pinLabels");
+    expect(SYSTEM_PROMPT).toContain("trace");
+    expect(SYSTEM_PROMPT).toContain("<chip>");
+    expect(SYSTEM_PROMPT).toContain("soic8");
+  });
 });
 
 describe("buildFullPrompt", () => {

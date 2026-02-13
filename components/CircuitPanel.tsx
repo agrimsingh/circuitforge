@@ -1,8 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
-
-type Tab = "code" | "preview";
+import { useRef, useEffect } from "react";
 
 interface CircuitPanelProps {
   code: string;
@@ -21,7 +19,7 @@ function RunFramePreview({ code }: { code: string }) {
           runframe_type: "runframe_props_changed",
           runframe_props: {
             fsMap: { "main.tsx": code },
-            entrypoint: "main.tsx",
+            mainComponentPath: "main.tsx",
           },
         },
         "*"
@@ -52,26 +50,12 @@ function RunFramePreview({ code }: { code: string }) {
 }
 
 export function CircuitPanel({ code, onExport, isExporting }: CircuitPanelProps) {
-  const [tab, setTab] = useState<Tab>("code");
-
   return (
     <div className="flex flex-col h-full bg-[#080c14]">
       <div className="flex items-center gap-1 px-4 py-2 border-b border-[#1a2236]">
-        <div className="flex items-center gap-1 mr-auto">
-          {(["code", "preview"] as Tab[]).map((t) => (
-            <button
-              key={t}
-              onClick={() => setTab(t)}
-              className={`px-3 py-1.5 rounded text-xs font-mono uppercase tracking-wider transition-colors ${
-                tab === t
-                  ? "bg-[#1a2a44] text-[#00d4ff] border border-[#00d4ff]/20"
-                  : "text-[#4a6080] hover:text-[#94a8c0] border border-transparent"
-              }`}
-            >
-              {t}
-            </button>
-          ))}
-        </div>
+        <span className="text-xs font-mono uppercase tracking-wider text-[#4a6080] mr-auto">
+          Preview
+        </span>
 
         {code && (
           <div className="flex items-center gap-1">
@@ -79,7 +63,7 @@ export function CircuitPanel({ code, onExport, isExporting }: CircuitPanelProps)
               onClick={() => navigator.clipboard.writeText(code)}
               className="px-2 py-1 text-[10px] font-mono text-[#4a6080] hover:text-[#94a8c0] border border-[#1a2236] rounded transition-colors"
             >
-              Copy
+              Copy Code
             </button>
             <button
               onClick={onExport}
@@ -96,14 +80,8 @@ export function CircuitPanel({ code, onExport, isExporting }: CircuitPanelProps)
         {!code ? (
           <div className="flex items-center justify-center h-full">
             <p className="text-xs text-[#2a3a54] font-mono">
-              Circuit code will appear here
+              Circuit preview will appear here
             </p>
-          </div>
-        ) : tab === "code" ? (
-          <div className="h-full overflow-auto p-4 scrollbar-thin">
-            <pre className="text-xs font-mono text-[#94a8c0] whitespace-pre-wrap leading-relaxed">
-              <code>{code}</code>
-            </pre>
           </div>
         ) : (
           <div className="h-full w-full bg-white">
