@@ -9,10 +9,14 @@ import type {
   ReviewFinding,
   ReviewDecision,
   AgentRequest,
+  PhaseStepState,
+  PhaseStepStatus,
+  GateEvent,
 } from "./types";
 import { extractCodeFromText, stripCodeBlocks } from "@/lib/agent/code";
 
 export interface AgentMessage {
+  id: string;
   role: "user" | "assistant";
   content: string;
 }
@@ -52,6 +56,8 @@ export interface AgentStreamState {
   phase: DesignPhase;
   phaseProgress: number;
   phaseMessage: string | null;
+  phaseSteps: PhaseStepState[];
+  gateEvents: GateEvent[];
   requirements: RequirementItem[];
   architecture: ArchitectureNode[];
   reviewFindings: ReviewFinding[];
@@ -64,6 +70,21 @@ export interface SendPromptOptions {
   phase?: DesignPhase;
   uiMode?: AgentRequest["uiMode"];
   reviewDecisions?: ReviewDecision[];
+}
+
+const DESIGN_PHASE_ORDER: DesignPhase[] = [
+  "requirements",
+  "architecture",
+  "implementation",
+  "review",
+  "export",
+];
+
+function createInitialPhaseSteps(activePhase?: DesignPhase): PhaseStepState[] {
+  return DESIGN_PHASE_ORDER.map((phase) => ({
+    phase,
+    status: phase === (activePhase ?? "implementation") ? "active" : "pending",
+  }));
 }
 
 function createRetryTelemetry(): RetryTelemetry {
@@ -129,6 +150,43 @@ function setFindingDecision(findings: ReviewFinding[], decision: ReviewDecision)
   );
 }
 
+function applyPhaseUpdate(
+  steps: PhaseStepState[],
+  phase: DesignPhase,
+  status: PhaseStepStatus,
+  reason?: string,
+  gate?: string
+): PhaseStepState[] {
+  const next = [...steps];
+  const phaseIndex = DESIGN_PHASE_ORDER.indexOf(phase);
+
+  if (phaseIndex < 0) {
+    return next;
+  }
+
+  return next.map((step, index) => {
+    if (index < phaseIndex) {
+      return { ...step, status: "complete" };
+    }
+
+    if (index === phaseIndex) {
+      return {
+        ...step,
+        status,
+        reason: reason ?? step.reason,
+        gate: gate ?? step.gate,
+      };
+    }
+
+    return {
+      ...step,
+      status: "pending",
+      reason: undefined,
+      gate: undefined,
+    };
+  });
+}
+
 const initialState: AgentStreamState = {
   messages: [],
   thinkingText: "",
@@ -143,6 +201,8 @@ const initialState: AgentStreamState = {
   phase: "implementation",
   phaseProgress: 0,
   phaseMessage: null,
+  phaseSteps: createInitialPhaseSteps("implementation"),
+  gateEvents: [],
   requirements: [],
   architecture: [],
   reviewFindings: [],
@@ -155,6 +215,7 @@ export function useAgentStream() {
   const accumulatedTextRef = useRef("");
   const activityLogRef = useRef("");
   const toolCounterRef = useRef(0);
+  const messageCounterRef = useRef(0);
   const lastStateRef = useRef(initialState);
 
   useEffect(() => {
@@ -168,6 +229,8 @@ export function useAgentStream() {
 
   const ensureRetryTelemetry = (current: RetryTelemetry | null) => current ?? createRetryTelemetry();
 
+  const nextMessageId = () => `msg-${messageCounterRef.current++}`;
+
   const sendPrompt = useCallback(async (prompt: string, previousCode?: string, options?: SendPromptOptions) => {
     abortRef.current?.abort();
     const controller = new AbortController();
@@ -176,6 +239,7 @@ export function useAgentStream() {
     const currentReviewDecisions =
       options?.reviewDecisions ??
       lastStateRef.current.reviewDecisions;
+    const nextPhase = options?.phase ?? state.phase;
 
     accumulatedTextRef.current = "";
     activityLogRef.current = "";
@@ -183,14 +247,18 @@ export function useAgentStream() {
 
     setState((prev) => ({
       ...prev,
-      messages: [...prev.messages, { role: "user", content: prompt }],
+      messages: [...prev.messages, { id: nextMessageId(), role: "user", content: prompt }],
       thinkingText: "",
       toolEvents: [],
       isStreaming: true,
       error: null,
       costUsd: null,
       retryTelemetry: createRetryTelemetry(),
-      phase: options?.phase ?? prev.phase,
+      phase: nextPhase,
+      phaseProgress: 0,
+      phaseMessage: "Phase entered",
+      phaseSteps: createInitialPhaseSteps(nextPhase),
+      gateEvents: [],
       reviewDecisions: [],
     }));
 
@@ -261,10 +329,12 @@ export function useAgentStream() {
                   };
                 } else {
                   msgs.push({
+                    id: nextMessageId(),
                     role: "assistant",
                     content: chatContent,
                   });
                 }
+
                 return {
                   ...prev,
                   messages: msgs,
@@ -361,26 +431,37 @@ export function useAgentStream() {
                 phase: event.phase,
                 phaseProgress: 0,
                 phaseMessage: event.reason ?? "phase entered",
+                phaseSteps: applyPhaseUpdate(
+                  prev.phaseSteps.length ? prev.phaseSteps : createInitialPhaseSteps(event.phase),
+                  event.phase,
+                  "active",
+                  event.reason,
+                  undefined
+                ),
               }));
               break;
             }
 
             case "phase_progress": {
-              if (event.phase) {
-                setState((prev) => ({
-                  ...prev,
-                  phase: event.phase,
-                  phaseProgress: event.progress,
-                  phaseMessage: event.message,
-                }));
-              }
+              setState((prev) => ({
+                ...prev,
+                phase: event.phase,
+                phaseProgress: event.progress,
+                phaseMessage: event.message,
+                phaseSteps: applyPhaseUpdate(
+                  prev.phaseSteps.length ? prev.phaseSteps : createInitialPhaseSteps(event.phase),
+                  event.phase,
+                  "active",
+                  event.message,
+                  undefined
+                ),
+              }));
               break;
             }
 
             case "phase_block_done": {
               appendActivity(
-                `${event.phase} block ${event.blockId} ${event.status}: ${event.message ?? ""}`
-                  .trim()
+                `${event.phase} block ${event.blockId} ${event.status}: ${event.message ?? ""}`.trim()
               );
               setState((prev) => ({
                 ...prev,
@@ -395,11 +476,52 @@ export function useAgentStream() {
 
             case "gate_passed": {
               appendActivity(`✅ ${event.gate}: ${event.message}`);
+              setState((prev) => ({
+                ...prev,
+                phaseSteps: applyPhaseUpdate(
+                  prev.phaseSteps.length ? prev.phaseSteps : createInitialPhaseSteps(event.phase),
+                  event.phase,
+                  "complete",
+                  event.message,
+                  event.gate
+                ),
+                gateEvents: [
+                  ...prev.gateEvents,
+                  {
+                    phase: event.phase,
+                    gate: event.gate,
+                    status: "passed",
+                    reason: event.message,
+                    message: event.message,
+                    at: Date.now(),
+                  },
+                ],
+              }));
               break;
             }
 
             case "gate_blocked": {
               appendActivity(`🛑 ${event.gate} blocked: ${event.reason}`);
+              setState((prev) => ({
+                ...prev,
+                phaseSteps: applyPhaseUpdate(
+                  prev.phaseSteps.length ? prev.phaseSteps : createInitialPhaseSteps(event.phase),
+                  event.phase,
+                  "blocked",
+                  event.reason,
+                  event.gate
+                ),
+                gateEvents: [
+                  ...prev.gateEvents,
+                  {
+                    phase: event.phase,
+                    gate: event.gate,
+                    status: "blocked",
+                    reason: event.reason,
+                    at: Date.now(),
+                  },
+                ],
+              }));
               break;
             }
 
@@ -560,4 +682,3 @@ export function useAgentStream() {
 
   return { ...state, sendPrompt, setReviewDecision, stop };
 }
-

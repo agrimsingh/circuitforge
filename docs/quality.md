@@ -7,7 +7,7 @@ Last updated: 2026-02-13
 | Domain | Spec | Code | Tests | Review | Overall |
 |--------|------|------|-------|--------|---------|
 | Agent Backend | B | B | B | C | B |
-| Frontend UI | C | B | F | C | C |
+| Frontend UI | B | B | F | C | B |
 | Parts Search | B | B | B | C | B |
 | Export Pipeline | C | C | B | F | C |
 | Prompt Engineering | B | B | F | C | C |
@@ -18,7 +18,7 @@ Last updated: 2026-02-13
 |-------|-------|-------|
 | Error Handling | B | Route validation tested, SDK errors streamed, backend self-correction loop with compile diagnostics |
 | Security | D | API key server-side only, validated in tests |
-| Observability | C | Activity log includes retry telemetry and InfoPanel now shows retry summary (attempts, first error, category counts, final status) |
+| Observability | B | Reasoning stream, chain-of-thought steps, tool rows, architecture updates, and review decisions are now surfaced via dedicated workflow UI surfaces |
 | Performance | F | Not started |
 | CI | C | CI workflow exists (`.github/workflows/ci.yml`); needs a green run history for confidence |
 | Documentation | B | Architecture, plans, quality scorecard reflect reality |
@@ -55,3 +55,4 @@ Last updated: 2026-02-13
 - 2026-02-13: Added in-memory adaptive error memory (rolling failed-attempt categories) to auto-prioritize guardrails for recurring failures. Test count now 55.
 - 2026-02-13: Added Convex-backed persistent self-learning memory (HTTP actions + fallback to in-memory). Test count now 57.
 - 2026-02-13: Added phase-aware event contract, KiCad-backed validation/export outputs, and GitHub Actions CI pipeline. Added `kicad-sch-ts@^1.0.3` backend adapter.
+- 2026-02-13: Migrated frontend to AI SDK Elements primitives for chat, workflow, artifact, and architecture visualization surfaces.

@@ -45,6 +45,7 @@
 - [x] Deslop: removed dead files, dead code, as-casts
 
 ## Phase 5: Polish (next)
+- [x] AI SDK Elements migration (Conversation/PromptInput/Reasoning/Tool/Artifact/Canvas/Node/Edge)
 - [ ] Error handling and boundaries
 - [x] Agent self-correction loop (compile + diagnostics + retry/stagnation policy)
 - [x] Retry telemetry surfaced in InfoPanel activity tab
@@ -52,7 +53,7 @@
 - [x] Adaptive error memory for recurring failure classes (rolling prompt guardrails)
 - [x] Convex-backed persistent error memory (with in-memory fallback)
 - [ ] Loading states and animations
-- [ ] Mobile-responsive considerations
+- [x] Mobile-responsive considerations
 - [ ] React component tests (Testing Library)
 - [ ] E2E browser tests (Playwright)
 - [ ] Refine board sizing heuristic (components still escape bounds sometimes)

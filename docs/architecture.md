@@ -10,14 +10,30 @@ CircuitForge is a conversational AI agent that designs electronic circuits from 
 - Integrated KiCad validation as a post-generation ground truth layer using `circuit-json-to-kicad` and `kicad-sch-ts`, including connectivity and electrical rule findings.
 - Added KiCad edit pathway so targeted schematic edits (`manage_component`, `manage_wire`) can be applied after generation and re-validated through the same loop.
 - Expanded export and validation contracts to support KiCad review artifacts (`kicad_sch`, `kicad_report.json`, `connectivity.json`) via `formatSet`.
+- Migrated UI presentation to AI SDK Elements surfaces with a split-screen workflow:
+  - `Conversation` + `PromptInput` for interactive input and suggestion strips
+  - `Reasoning` + `ChainOfThought` + `Tool` surfaces for streaming reasoning and tool execution visibility
+  - `Artifact` + `WebPreview` for preview and export actions
+  - `Canvas` + `Node` + `Edge` architecture graph rendering (with textual fallback)
 
 ## System Diagram
 
 ```
 Browser (Next.js)
-├── Chat Panel           → streams assistant text (code blocks stripped)
-├── Circuit Panel        → Live Preview only (RunFrame iframe)
-└── Info Panel (tabbed)  → Activity log + Tool call details + retry telemetry summary + phase + review findings
+├── Chat Panel (AI Elements)
+│   ├── Conversation → messages + initial suggestion chips
+│   ├── PromptInput → submit/stop and streaming mode
+│   ├── Reasoning + ChainOfThought strips for stream phase + thought logs
+│   └── Tool card stream within chat
+├── Circuit Panel (Artifact)
+│   ├── Artifact header actions (copy/export)
+│   └── Live RunFrame preview in WebPreview wrapper
+└── Info Panel (AI-native)
+    ├── Workflow strip + reasoning telemetry
+    ├── Tool card log
+    ├── Requirements + architecture graph
+    ├── Review findings with accept/dismiss actions
+    └── Optional gate confirmation prompts (fallback UX)
          │
     POST /api/agent (SSE) + POST /api/sandbox/quickstart
          │
@@ -100,8 +116,9 @@ Browser (Next.js)
 8. On retries, backend injects structured diagnostics + adaptive guardrails into the next repair prompt
 9. SSE emits telemetry (`retry_start`, `validation_errors`, `retry_result`) and final assistant text
 10. Frontend derives retry summary stats (attempt count, first error type, category counts, final status) from SSE events
-11. Frontend parses SSE into 3 panels: chat (code blocks replaced with placeholder), preview (RunFrame), activity+tools (tabbed)
-12. RunFrame renders live schematic/PCB/3D preview in iframe
+11. Frontend parses SSE into split panels: chat (code blocks replaced with placeholder), artifact preview (RunFrame), and workflow (phase/tool/requirements/review)
+12. Frontend derives `phaseSteps` and `gateEvents` from stream events to drive chain-of-thought state and approval prompts without changing backend SSE contract
+13. RunFrame renders live schematic/PCB/3D preview in iframe via Artifact/WebPreview composition
 13. Export: client compiles via compile.tscircuit.com → server validates/converts to zip (+ optional KiCad bundle)
 14. Optional KiCad validation: `/api/kicad/validate` returns schema, findings, and connectivity metadata
 15. Sandbox setup validation: `/api/sandbox/quickstart` creates a microVM, executes a command, then tears down

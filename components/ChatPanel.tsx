@@ -1,112 +1,194 @@
 "use client";
 
-import { useRef, useEffect, type FormEvent, useState } from "react";
+import { useCallback } from "react";
+import { Conversation, ConversationContent, ConversationEmptyState } from "@/components/ai-elements/conversation";
+import { Message, MessageContent, MessageResponse } from "@/components/ai-elements/message";
+import {
+  Suggestion,
+  Suggestions,
+} from "@/components/ai-elements/suggestion";
+import {
+  PromptInput,
+  PromptInputSubmit,
+  PromptInputTextarea,
+} from "@/components/ai-elements/prompt-input";
+import {
+  ChainOfThought,
+  ChainOfThoughtHeader,
+  ChainOfThoughtStep,
+} from "@/components/ai-elements/chain-of-thought";
+import { Reasoning, ReasoningContent, ReasoningTrigger } from "@/components/ai-elements/reasoning";
+import { Tool, ToolContent, ToolHeader, ToolInput, ToolOutput } from "@/components/ai-elements/tool";
 import type { AgentMessage } from "@/lib/stream/useAgentStream";
+import type { ToolEvent } from "@/lib/stream/useAgentStream";
+import type { PhaseStepState, GateEvent } from "@/lib/stream/types";
 
-interface ChatPanelProps {
+type ChatPanelProps = {
   messages: AgentMessage[];
+  thinkingText: string;
+  toolEvents: ToolEvent[];
   isStreaming: boolean;
+  phaseSteps?: PhaseStepState[];
+  gateEvents?: GateEvent[];
   onSend: (prompt: string) => void;
   onStop: () => void;
+};
+
+const starterPrompts = [
+  "Design a low-power ESP32-based temperature monitor with OLED display",
+  "Create a USB-powered STM32 dev board with SWD header and status LEDs",
+  "Build a Bluetooth BLE pulse oximeter with LiPo battery charge circuit",
+  "Give me a simple single-sided LED blink board with mounting holes",
+];
+
+function toolStateFromEvent(status: ToolEvent["status"]) {
+  return status === "running" ? "input-streaming" : "output-available";
 }
 
-export function ChatPanel({ messages, isStreaming, onSend, onStop }: ChatPanelProps) {
-  const [input, setInput] = useState("");
-  const scrollRef = useRef<HTMLDivElement>(null);
+function statusToPhaseStatus(
+  status: PhaseStepState["status"]
+): "pending" | "active" | "complete" {
+  return status === "pending" ? "pending" : status === "blocked" ? "active" : status;
+}
 
-  useEffect(() => {
-    scrollRef.current?.scrollTo({
-      top: scrollRef.current.scrollHeight,
-      behavior: "smooth",
-    });
-  }, [messages]);
+function formatToolTime(startedAt: number, finishedAt?: number) {
+  if (!finishedAt) return null;
+  return `${((finishedAt - startedAt) / 1000).toFixed(1)}s`;
+}
 
-  const handleSubmit = (e: FormEvent) => {
-    e.preventDefault();
-    const trimmed = input.trim();
-    if (!trimmed || isStreaming) return;
-    setInput("");
-    onSend(trimmed);
-  };
+export function ChatPanel({
+  messages,
+  thinkingText,
+  toolEvents,
+  isStreaming,
+  phaseSteps,
+  onSend,
+  onStop,
+}: ChatPanelProps) {
+  const handleSubmit = useCallback(
+    ({ text }: { text: string }) => {
+      const prompt = text.trim();
+      if (!prompt || isStreaming) return;
+      onSend(prompt);
+    },
+    [isStreaming, onSend]
+  );
 
   return (
-    <div className="flex flex-col h-full bg-[#0a0e17]">
-      <div className="flex items-center gap-2 px-4 py-3 border-b border-[#1a2236]">
-        <div className="size-2 rounded-full bg-[#00d4ff] animate-pulse" />
-        <span className="text-xs font-mono uppercase tracking-widest text-[#4a6080]">
-          Chat
-        </span>
-      </div>
-
-      <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-thin">
-        {messages.length === 0 && (
-          <div className="flex flex-col items-center justify-center h-full text-center px-6">
-            <div className="text-5xl mb-4 opacity-20">⚡</div>
-            <h2 className="text-lg font-semibold text-[#c0d0e0] mb-2">
-              What do you want to build?
-            </h2>
-            <p className="text-sm text-[#4a6080] max-w-xs">
-              Describe your circuit and CircuitForge will design it with real parts from JLCPCB.
-            </p>
-          </div>
-        )}
-
-        {messages.map((msg, i) => (
-          <div
-            key={i}
-            className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-          >
-            <div
-              className={`max-w-[85%] rounded-lg px-4 py-3 text-sm leading-relaxed ${
-                msg.role === "user"
-                  ? "bg-[#1a2a44] text-[#c0d8f0] border border-[#2a3a54]"
-                  : "bg-[#0d1520] text-[#94a8c0] border border-[#152030]"
-              }`}
-            >
-              <pre className="whitespace-pre-wrap font-sans wrap-break-word">
-                {msg.content}
-              </pre>
-            </div>
-          </div>
-        ))}
-
-        {isStreaming && (
-          <div className="flex items-center gap-2 text-xs text-[#00d4ff]">
-            <span className="inline-block size-1.5 bg-[#00d4ff] rounded-full animate-pulse" />
-            CircuitForge is thinking...
-          </div>
-        )}
-      </div>
-
-      <form onSubmit={handleSubmit} className="p-3 border-t border-[#1a2236]">
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="Describe your circuit..."
-            disabled={isStreaming}
-            className="flex-1 bg-[#0d1520] border border-[#1a2a44] rounded-lg px-4 py-2.5 text-sm text-[#c0d8f0] placeholder-[#3a5070] focus:outline-none focus:border-[#00d4ff] focus:ring-1 focus:ring-[#00d4ff]/20 transition-colors disabled:opacity-50"
-          />
-          {isStreaming ? (
-            <button
-              type="button"
-              onClick={onStop}
-              className="px-4 py-2.5 bg-[#ff4444]/10 border border-[#ff4444]/30 text-[#ff4444] rounded-lg text-sm font-medium hover:bg-[#ff4444]/20 transition-colors"
-            >
-              Stop
-            </button>
+    <div className="flex h-full flex-col bg-[#080c14]">
+      <Conversation className="flex-1 bg-[#080c14]">
+        <ConversationContent>
+          {messages.length === 0 ? (
+            <ConversationEmptyState>
+              <h3 className="text-lg font-semibold">What circuit are you building?</h3>
+              <p className="text-sm text-[#4a6080]">
+                Describe constraints and parts, then let the agent derive requirements, architecture,
+                and code.
+              </p>
+              <Suggestions>
+                {starterPrompts.map((suggestion) => (
+                  <Suggestion
+                    key={suggestion}
+                    onClick={() => onSend(suggestion)}
+                    suggestion={suggestion}
+                    disabled={isStreaming}
+                    className="bg-[#0b1322] text-[#94a8c0]"
+                  />
+                ))}
+              </Suggestions>
+            </ConversationEmptyState>
           ) : (
-            <button
-              type="submit"
-              disabled={!input.trim()}
-              className="px-4 py-2.5 bg-[#00d4ff]/10 border border-[#00d4ff]/30 text-[#00d4ff] rounded-lg text-sm font-medium hover:bg-[#00d4ff]/20 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-            >
-              Send
-            </button>
+            <>
+              {phaseSteps && phaseSteps.length > 0 && (
+                <ChainOfThought defaultOpen className="mb-6 pr-1">
+                  <ChainOfThoughtHeader>Workflow</ChainOfThoughtHeader>
+                  {phaseSteps.map((step) => (
+                    <ChainOfThoughtStep
+                      key={step.phase}
+                      label={
+                        <span className="font-medium uppercase tracking-wide text-xs">
+                          {step.phase}
+                        </span>
+                      }
+                      status={statusToPhaseStatus(step.status)}
+                      description={step.reason ? <span>{step.reason}</span> : undefined}
+                    />
+                  ))}
+                </ChainOfThought>
+              )}
+
+              {messages.map((message) => (
+                <Message key={message.id} from={message.role}>
+                  <MessageContent>
+                    <MessageResponse>
+                      {message.content || (message.role === "assistant" ? "..." : "")}
+                    </MessageResponse>
+                  </MessageContent>
+                </Message>
+              ))}
+
+              {thinkingText && (
+                <Reasoning isStreaming={isStreaming} defaultOpen={isStreaming} className="not-prose">
+                  <ReasoningTrigger>Agent reasoning</ReasoningTrigger>
+                  <ReasoningContent>{thinkingText}</ReasoningContent>
+                </Reasoning>
+              )}
+
+              {toolEvents.length > 0 && (
+                <div className="space-y-2">
+                  {toolEvents.map((event) => {
+                const duration = formatToolTime(event.startedAt, event.finishedAt);
+                    return (
+                      <Tool key={event.id} defaultOpen={isStreaming && event.status === "running"}>
+                        <ToolHeader
+                          title={event.tool}
+                          type="dynamic-tool"
+                          toolName={event.tool}
+                          state={toolStateFromEvent(event.status)}
+                        />
+                        <ToolContent>
+                          <ToolInput
+                            input={
+                              event.input ?? {
+                                message: "No input payload",
+                              }
+                            }
+                          />
+                          {duration && <p className="text-xs text-muted-foreground">{duration}</p>}
+                          <ToolOutput
+                            output={
+                              event.output ??
+                              (event.status === "running" ? "Running..." : "No output")
+                            }
+                            errorText={undefined}
+                          />
+                        </ToolContent>
+                      </Tool>
+                    );
+                  })}
+                </div>
+              )}
+            </>
           )}
-        </div>
-      </form>
+        </ConversationContent>
+      </Conversation>
+
+      <div className="border-t border-[#1a2236] p-3">
+        <PromptInput
+          className="relative rounded-xl border border-[#1a2236] bg-[#0d1520]"
+          onSubmit={handleSubmit}
+        >
+          <PromptInputTextarea
+            placeholder="Describe your circuit requirement"
+            disabled={isStreaming}
+            className="max-h-32"
+          />
+          <PromptInputSubmit
+            status={isStreaming ? "streaming" : "ready"}
+            onStop={onStop}
+          />
+        </PromptInput>
+      </div>
     </div>
   );
 }

@@ -5,16 +5,17 @@ Build a working demo of CircuitForge: prompt → agent reasoning → parts searc
 
 ## Current State
 - Full-stack MVP functional: prompt → agent → parts search → tscircuit code → live preview → export
-- 3-panel UI: Chat | Preview | Activity+Tools (tabbed)
+- 2/3-split UI: Conversation/chat, AI-native artifact preview, and workflow panel
 - 57 tests passing across unit, integration, and SDK tiers
 - Vercel Sandbox SDK integrated with smoke-test endpoint (`POST /api/sandbox/quickstart`)
-- Agent backend now runs a self-correction loop (compile validation + retry prompts from diagnostics)
+- Agent backend now runs a self-correction loop (compile validation + structured diagnostic retries + stagnation stop)
 - Preventive routing guardrails added for recurring trace/via DRC failures
-- InfoPanel now surfaces retry telemetry summary for live debugging
+- InfoPanel now surfaces CoT steps, reasoning stream, tool rows, requirements, architecture, and review findings
 - Backend now persists adaptive self-learning memory via Convex HTTP actions (with in-memory fallback when unset)
 - Root README now documents local setup, optional Convex persistence, and sandbox auth setup
 - V2 phase orchestration now emits phase checkpoints, architecture events, and review findings in `/api/agent`
 - Export route supports optional KiCad + review bundle outputs
+- Frontend now uses AI SDK Elements primitives for chat, reasoning, artifact, architecture graph, and tool surfaces
 
 ## Plan of Work
 1. ~~Initialize Next.js with TypeScript, Tailwind, App Router~~
@@ -31,6 +32,7 @@ Build a working demo of CircuitForge: prompt → agent reasoning → parts searc
 12. Improve retry loop convergence rate for complex PCB violations
 13. Add five-phase workflow completion criteria and docs
 14. Hardening pass for KiCad round-trip validation
+15. Complete AI SDK Elements migration for chat/info/architecture/artifact surfaces
 
 ## Milestones
 1. **Agent streams text** — Can send prompt, receive streaming SSE response
@@ -40,6 +42,7 @@ Build a working demo of CircuitForge: prompt → agent reasoning → parts searc
 5. **Export works** — Download zip with BOM + Gerbers
 6. **Phase-aware orchestration** — Requirements + architecture checkpoints and review findings are streamed
 7. **KiCad review path** — Export includes KiCad report artifacts where requested
+8. **AI-native UI composition** — AI SDK Elements workflow surfaces, chain-of-thought, reason stream, and artifact panel
 
 ## Validation
 - Send "design a WiFi temperature sensor" → get real ESP32 + DHT22 parts from jlcsearch
@@ -54,6 +57,7 @@ Build a working demo of CircuitForge: prompt → agent reasoning → parts searc
 - [x] Milestone 5: Export works
 - [x] Milestone 6: Phase-aware orchestration and review flow
 - [x] Milestone 7: KiCad round-trip integration in export/review
+- [x] Milestone 8: AI SDK Elements migration for UI workflow surfaces
 
 ## Known Issues (active)
 - Agent-generated circuits sometimes have components outside board bounds despite dynamic sizing prompts

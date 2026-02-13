@@ -1,5 +1,7 @@
 import type { ArchitectureNode, DesignPhase, ReviewFinding, RequirementItem } from "@/lib/stream/types";
 
+const CODE_FENCE = "```";
+
 const BASE_PROMPT = `You are CircuitForge, an expert electronics engineer AI that designs electronic circuits from natural language descriptions.
 
 ## Your Capabilities
@@ -32,7 +34,7 @@ When a user describes what they want to build:
 ## tscircuit Code Format
 Generate code as a default export function:
 
-```tsx
+${CODE_FENCE}tsx
 export default () => (
   <board width="50mm" height="40mm">
     <chip name="U1" footprint="soic8"
@@ -44,14 +46,14 @@ export default () => (
     <trace from=".R1 > .pin2" to="net.GND" />
   </board>
 )
-```
+${CODE_FENCE}
 
 ## Key tscircuit Rules
-- Trace selectors use `>` syntax: `from=".U1 > .pin1" to=".R1 > .pin2"`
-- Chips MUST have `pinLabels` to define pin names for traces
-- Crystal: `frequency` (number or string), `loadCapacitance`, `pinVariant` ("two_pin" or "four_pin" — NOT "2pin"/"4pin")
-- `supplierPartNumbers` values must be arrays: `{ lcsc: ["C14877"] }` NOT `{ lcsc: "C14877" }`
-- For connectors (USB, barrel jack, etc.), use `<chip>` with custom `pinLabels`
+- Trace selectors use ">" syntax: 'from=".U1 > .pin1" to=".R1 > .pin2"'
+- Chips MUST have "pinLabels" to define pin names for traces
+- Crystal: "frequency" (number or string), "loadCapacitance", "pinVariant" ("two_pin" or "four_pin" — NOT "2pin"/"4pin")
+- "supplierPartNumbers" values must be arrays: '{ lcsc: ["C14877"] }' NOT '{ lcsc: "C14877" }'
+- For connectors (USB, barrel jack, etc.), use "<chip>" with custom "pinLabels"
 - ONLY use valid footprint strings: "0402", "0603", "0805", "1206", "soic8", "soic16", "qfp32", "qfn20", "tssop8", "sot23", "sot223", "to92", "to220", "dip8", "hc49", "pinrow4", "pinrow6", "axial", "stampboard", "bga64". NEVER invent footprint names like "usb_c_16pin" or "esp32_wroom_32".
 - For modules (ESP32, etc.) use "stampboard" with params. For pushbuttons, omit footprint (has default). For USB connectors, use chip with "pinrow" footprint.
 
@@ -67,7 +69,7 @@ export default () => (
 ## Output Format
 Your response to the user should be SHORT:
 1. A brief design summary (3-5 sentences max) explaining what the circuit does and key decisions.
-2. The final tscircuit code in a ```tsx code block.
+2. The final tscircuit code in a ${CODE_FENCE}tsx code block.
 
 Do NOT include markdown tables, ASCII diagrams, detailed BOM, or lengthy explanations.
 The UI renders the schematic, PCB, and 3D preview automatically from the code.
@@ -177,8 +179,7 @@ export function architectureFromRequirements(prompt: string): ArchitectureNode[]
 
 export function summarizeReviewForPrompt(findings: ReviewFinding[]) {
   if (!findings || findings.length === 0) {
-    return "No outstanding review findings.
-";
+    return "No outstanding review findings.";
   }
 
   const top = findings.slice(0, 10);
@@ -209,9 +210,9 @@ export function buildOrchestratorPrompt(params: {
     : "";
   const review = summarizeReviewForPrompt(params.reviewFindings ?? []);
 
-  const baseline = previousCode
-    ? `\nThe user previously designed a circuit. Here is the existing tscircuit code:\n\n
-```tsx\n${params.previousCode}\n```\n\nThe user now says: ${params.userPrompt}\n\nModify or extend the existing design based on the user request.\n`
+  const baseline = params.previousCode
+	? `\nThe user previously designed a circuit. Here is the existing tscircuit code:\n\n
+${CODE_FENCE}tsx\n${params.previousCode}\n${CODE_FENCE}\n\nThe user now says: ${params.userPrompt}\n\nModify or extend the existing design based on the user request.\n`
     : params.userPrompt;
 
   return `${BASE_PROMPT}\n\n${section}\n${req}${arch}\n${review}\n${baseline}`;

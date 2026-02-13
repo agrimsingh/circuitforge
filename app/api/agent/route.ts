@@ -54,15 +54,6 @@ const MEMORY_BY_SESSION = new Map<
   }
 >();
 
-const PREVENTIVE_LAYOUT_GUARDRAILS = `
-Recurring PCB DRC failures to avoid up front:
-- Avoid trace overlaps/crossings: do not route two nets through the same corridor.
-- Keep trace spacing conservative (target >= 0.25mm) between unrelated nets.
-- Keep vias from different nets separated (target >= 0.8mm center spacing).
-- Do not drop two vias near the same choke point unless they share a net.
-- Prefer short orthogonal routing with clear channel separation around dense IC pins.
-`;
-
 const KICAD_PHASE_GATES: Record<DesignPhase, string> = {
   requirements: "Requirements phase constraints must be complete before implementation",
   architecture: "Architecture output must resolve before implementation",
@@ -117,7 +108,7 @@ const KICAD_EDIT_KIND = {
 } as const;
 
 function normalizeKicadValue(raw: string): string | null {
-  const compact = raw.trim().replace(/["'`]/g, "").replace(/[,.;:)]/g, "").replace(/\s+/g, "");
+  const compact = raw.trim().replace(/["'`]/g, "").replace(/[,;:)]/g, "").replace(/\s+/g, "");
   if (!compact || !/\d/.test(compact)) return null;
   const withoutOhms = compact.replace(/\u03a9/g, "").replace(/ohm/gi, "").replace(/Ω/g, "");
   return withoutOhms || null;
@@ -195,13 +186,13 @@ export function parseKicadEditPlan(prompt: string): ParsedKicadEditPlan | null {
 
   if (!isEditIntent) return null;
 
-  const valueChangeMatch = lower.match(
-    /(?:change|set|modify|update|adjust)\s+(?<reference>[a-z]+\d+[a-z]?)\b[^\n]{0,80}?\b(?:to|=)\s+(?<value>[^\n.,;)]{1,24})/i,
+  const valueChangeMatch = prompt.match(
+    /(?:change|set|modify|update|adjust)\s+([a-z]+\d+[a-z]?)\b[^\n]{0,80}?\b(?:to|=)\s+([^\n,;)]{1,24})/i
   );
-  if (valueChangeMatch?.groups) {
-    const reference = valueChangeMatch.groups.reference.toUpperCase();
-    const normalizedValue = normalizeKicadValue(valueChangeMatch.groups.value ?? "");
-    if (normalizedValue) {
+  if (valueChangeMatch) {
+    const reference = valueChangeMatch[1]?.toUpperCase();
+    const normalizedValue = normalizeKicadValue(valueChangeMatch[2] ?? "");
+    if (reference && normalizedValue) {
       const edits: KicadSchemaEdit[] = [
         {
           tool: "manage_component",
@@ -222,11 +213,11 @@ export function parseKicadEditPlan(prompt: string): ParsedKicadEditPlan | null {
   }
 
   const addNearMatch = lower.match(
-    /(?:add|insert|place|put)\s+(?<description>[^\n]{0,90}?)\s+(?:near|next to|beside|by|alongside)\s+(?<reference>[a-z]+\d+[a-z]?)\b/i,
+    /(?:add|insert|place|put)\s+([^\n]{0,90}?)\s+(?:near|next to|beside|by|alongside)\s+([a-z]+\d+[a-z]?)\b/i,
   );
-  if (addNearMatch?.groups) {
-    const description = addNearMatch.groups.description ?? "";
-    const reference = normalizeReference(addNearMatch.groups.reference);
+  if (addNearMatch) {
+    const description = addNearMatch[1] ?? "";
+    const reference = normalizeReference(addNearMatch[2] ?? "");
     if (!reference) return null;
 
     const kind = resolveEditKind(description);
@@ -257,11 +248,11 @@ export function parseKicadEditPlan(prompt: string): ParsedKicadEditPlan | null {
   }
 
   const connectMatch = lower.match(
-    /(?:connect|wire)\s+(?<from>[a-z]+\d+[a-z]?)\s+(?:to|and|with)\s+(?<to>[a-z]+\d+[a-z]?)\b/i,
+    /(?:connect|wire)\s+([a-z]+\d+[a-z]?)\s+(?:to|and|with)\s+([a-z]+\d+[a-z]?)\b/i,
   );
-  if (connectMatch?.groups) {
-    const from = normalizeReference(connectMatch.groups.from);
-    const to = normalizeReference(connectMatch.groups.to);
+  if (connectMatch) {
+    const from = normalizeReference(connectMatch[1] ?? "");
+    const to = normalizeReference(connectMatch[2] ?? "");
     if (!from || !to || from === to) return null;
 
     const edits: KicadSchemaEdit[] = [
@@ -283,13 +274,13 @@ export function parseKicadEditPlan(prompt: string): ParsedKicadEditPlan | null {
   }
 
   const explicitWireMatch = lower.match(
-    /(?:add|draw|route)\s+wire\s+(?:from\s*)?(?<x1>-?\d+(?:\.\d+)?)\s*,?\s*(?<y1>-?\d+(?:\.\d+)?)\s*(?:to|and)\s*(?<x2>-?\d+(?:\.\d+)?)\s*,?\s*(?<y2>-?\d+(?:\.\d+)?)\s*$/i,
+    /(?:add|draw|route)\s+wire\s+(?:from\s*)?(-?\d+(?:\.\d+)?)\s*,?\s*(-?\d+(?:\.\d+)?)\s*(?:to|and)\s*(-?\d+(?:\.\d+)?)\s*,?\s*(-?\d+(?:\.\d+)?)\s*$/i,
   );
-  if (explicitWireMatch?.groups) {
-    const startX = Number.parseFloat(explicitWireMatch.groups.x1);
-    const startY = Number.parseFloat(explicitWireMatch.groups.y1);
-    const endX = Number.parseFloat(explicitWireMatch.groups.x2);
-    const endY = Number.parseFloat(explicitWireMatch.groups.y2);
+  if (explicitWireMatch) {
+    const startX = Number.parseFloat(explicitWireMatch[1] ?? "");
+    const startY = Number.parseFloat(explicitWireMatch[2] ?? "");
+    const endX = Number.parseFloat(explicitWireMatch[3] ?? "");
+    const endY = Number.parseFloat(explicitWireMatch[4] ?? "");
 
     if (
       Number.isFinite(startX) &&
@@ -316,9 +307,9 @@ export function parseKicadEditPlan(prompt: string): ParsedKicadEditPlan | null {
     }
   }
 
-  const removeMatch = lower.match(/(?:remove|delete)\s+(?<reference>[a-z]+\d+[a-z]?)\b/i);
-  if (removeMatch?.groups?.reference) {
-    const reference = removeMatch.groups.reference.toUpperCase();
+  const removeMatch = lower.match(/(?:remove|delete)\s+([a-z]+\d+[a-z]?)\b/i);
+  if (removeMatch?.[1]) {
+    const reference = removeMatch[1].toUpperCase();
     const edits: KicadSchemaEdit[] = [
       {
         tool: "manage_component",
@@ -366,6 +357,8 @@ function getOrCreateSession(projectId?: string, sessionId?: string) {
     architecture: [] as ArchitectureNode[],
     reviewFindings: [] as ReviewFinding[],
     lastPhase: undefined as DesignPhase | undefined,
+    lastKicadSchema: undefined as string | undefined,
+    lastGeneratedCode: undefined as string | undefined,
   };
   MEMORY_BY_SESSION.set(resolved, context);
   return { id: resolved, context };

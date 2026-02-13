@@ -7,6 +7,24 @@ export type DesignPhase =
 
 export type UiMode = "auto" | "beginner" | "expert";
 
+export type PhaseStepStatus = "pending" | "active" | "complete" | "blocked";
+
+export interface PhaseStepState {
+  phase: DesignPhase;
+  status: PhaseStepStatus;
+  reason?: string;
+  gate?: string;
+}
+
+export interface GateEvent {
+  phase: DesignPhase;
+  gate: string;
+  status: "blocked" | "passed";
+  reason?: string;
+  message?: string;
+  at: number;
+}
+
 export interface RequirementItem {
   id: string;
   title: string;

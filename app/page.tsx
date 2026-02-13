@@ -5,7 +5,7 @@ import { useAgentStream } from "@/lib/stream/useAgentStream";
 import { ChatPanel } from "@/components/ChatPanel";
 import { InfoPanel } from "@/components/InfoPanel";
 import { CircuitPanel } from "@/components/CircuitPanel";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import type { DesignPhase } from "@/lib/stream/types";
 
 export default function Home() {
@@ -13,6 +13,8 @@ export default function Home() {
     messages,
     thinkingText,
     toolEvents,
+    phaseSteps,
+    gateEvents,
     circuitCode,
     isStreaming,
     error,
@@ -30,6 +32,16 @@ export default function Home() {
   } = useAgentStream();
   const [isExporting, setIsExporting] = useState(false);
   const [activePhase, setActivePhase] = useState<DesignPhase>("implementation");
+  const [isCompact, setIsCompact] = useState(false);
+
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 1023px)");
+    const handleChange = (event: MediaQueryListEvent) => setIsCompact(event.matches);
+    setIsCompact(media.matches);
+
+    media.addEventListener("change", handleChange);
+    return () => media.removeEventListener("change", handleChange);
+  }, []);
 
   const handleSend = useCallback(
     (prompt: string) => {
@@ -127,48 +139,107 @@ export default function Home() {
       </header>
 
       <main className="flex-1 overflow-hidden">
-        <Group orientation="horizontal" className="h-full">
-          <Panel defaultSize={30} minSize={20}>
-            <ChatPanel
-              messages={messages}
-              isStreaming={isStreaming}
-              onSend={handleSend}
-              onStop={stop}
-            />
-          </Panel>
+        {isCompact ? (
+          <Group orientation="vertical" className="h-full">
+            <Panel defaultSize={30} minSize={20}>
+              <ChatPanel
+                messages={messages}
+                thinkingText={thinkingText}
+                toolEvents={toolEvents}
+                phaseSteps={phaseSteps}
+                gateEvents={gateEvents}
+                isStreaming={isStreaming}
+                onSend={handleSend}
+                onStop={stop}
+              />
+            </Panel>
 
-          <Separator className="w-[3px] hover:bg-[#00d4ff]/10 transition-colors" />
+            <Separator className="h-[3px] hover:bg-[#00d4ff]/10 transition-colors" />
 
-          <Panel defaultSize={70} minSize={40}>
-            <Group orientation="vertical" className="h-full">
-              <Panel defaultSize={70} minSize={30}>
-                <CircuitPanel
-                  code={circuitCode}
-                  onExport={handleExport}
-                  isExporting={isExporting}
-                />
-              </Panel>
+            <Panel defaultSize={40} minSize={25}>
+              <CircuitPanel
+                code={circuitCode}
+                onExport={handleExport}
+                isExporting={isExporting}
+                title="Artifact"
+                description={phaseMessage ?? `Phase ${phase}`}
+              />
+            </Panel>
 
-              <Separator className="h-[3px] hover:bg-[#00d4ff]/10 transition-colors" />
+            <Separator className="h-[3px] hover:bg-[#00d4ff]/10 transition-colors" />
 
-              <Panel defaultSize={30} minSize={10} collapsible>
-                <InfoPanel
-                  activityText={thinkingText}
-                  toolEvents={toolEvents}
-                  isStreaming={isStreaming}
-                  retryTelemetry={retryTelemetry}
-                  phase={phase}
-                  phaseProgress={phaseProgress}
-                  phaseMessage={phaseMessage}
-                  requirements={requirements}
-                  architecture={architecture}
-                  reviewFindings={reviewFindings}
-                  onReviewDecision={setReviewDecision}
-                />
-              </Panel>
-            </Group>
-          </Panel>
-        </Group>
+            <Panel defaultSize={30} minSize={20} collapsible>
+              <InfoPanel
+                activityText={thinkingText}
+                toolEvents={toolEvents}
+                isStreaming={isStreaming}
+                retryTelemetry={retryTelemetry}
+                phase={phase}
+                phaseProgress={phaseProgress}
+                phaseMessage={phaseMessage}
+                requirements={requirements}
+                architecture={architecture}
+                reviewFindings={reviewFindings}
+                phaseSteps={phaseSteps}
+                gateEvents={gateEvents}
+                onReviewDecision={setReviewDecision}
+                onSend={handleSend}
+              />
+            </Panel>
+          </Group>
+        ) : (
+          <Group orientation="horizontal" className="h-full">
+            <Panel defaultSize={30} minSize={20}>
+              <ChatPanel
+                messages={messages}
+                thinkingText={thinkingText}
+                toolEvents={toolEvents}
+                phaseSteps={phaseSteps}
+                gateEvents={gateEvents}
+                isStreaming={isStreaming}
+                onSend={handleSend}
+                onStop={stop}
+              />
+            </Panel>
+
+            <Separator className="w-[3px] hover:bg-[#00d4ff]/10 transition-colors" />
+
+            <Panel defaultSize={70} minSize={40}>
+              <Group orientation="vertical" className="h-full">
+                <Panel defaultSize={70} minSize={30}>
+                  <CircuitPanel
+                    code={circuitCode}
+                    onExport={handleExport}
+                    isExporting={isExporting}
+                    title="Artifact"
+                    description={phaseMessage ?? `Phase ${phase}`}
+                  />
+                </Panel>
+
+                <Separator className="h-[3px] hover:bg-[#00d4ff]/10 transition-colors" />
+
+                <Panel defaultSize={30} minSize={10} collapsible>
+                  <InfoPanel
+                    activityText={thinkingText}
+                    toolEvents={toolEvents}
+                    isStreaming={isStreaming}
+                    retryTelemetry={retryTelemetry}
+                    phase={phase}
+                    phaseProgress={phaseProgress}
+                    phaseMessage={phaseMessage}
+                    requirements={requirements}
+                    architecture={architecture}
+                    reviewFindings={reviewFindings}
+                    phaseSteps={phaseSteps}
+                    gateEvents={gateEvents}
+                    onReviewDecision={setReviewDecision}
+                    onSend={handleSend}
+                  />
+                </Panel>
+              </Group>
+            </Panel>
+          </Group>
+        )}
       </main>
     </div>
   );

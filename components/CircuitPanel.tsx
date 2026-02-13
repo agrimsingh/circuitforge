@@ -1,11 +1,24 @@
 "use client";
 
-import { useRef, useEffect } from "react";
+import { useRef, useEffect, useCallback } from "react";
+import {
+  Artifact,
+  ArtifactAction,
+  ArtifactActions,
+  ArtifactContent,
+  ArtifactDescription,
+  ArtifactHeader,
+  ArtifactTitle,
+} from "@/components/ai-elements/artifact";
+import { WebPreview } from "@/components/ai-elements/web-preview";
+import { CopyIcon, DownloadIcon } from "lucide-react";
 
 interface CircuitPanelProps {
   code: string;
   onExport: () => void;
   isExporting: boolean;
+  title?: string;
+  description?: string;
 }
 
 function RunFramePreview({ code }: { code: string }) {
@@ -43,52 +56,70 @@ function RunFramePreview({ code }: { code: string }) {
     <iframe
       ref={iframeRef}
       src="https://runframe.tscircuit.com/iframe.html"
-      className="w-full h-full border-0"
+      className="size-full border-0"
       title="Circuit Preview"
     />
   );
 }
 
-export function CircuitPanel({ code, onExport, isExporting }: CircuitPanelProps) {
+export function CircuitPanel({
+  code,
+  onExport,
+  isExporting,
+  title = "Circuit Preview",
+  description = "Generated artifact from the active assistant run",
+}: CircuitPanelProps) {
+  const handleCopy = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(code);
+    } catch {
+      alert("Unable to copy code to clipboard.");
+    }
+  }, [code]);
+
   return (
-    <div className="flex flex-col h-full bg-[#080c14]">
-      <div className="flex items-center gap-1 px-4 py-2 border-b border-[#1a2236]">
-        <span className="text-xs font-mono uppercase tracking-wider text-[#4a6080] mr-auto">
-          Preview
-        </span>
+    <Artifact className="h-full bg-[#080c14]">
+      <ArtifactHeader>
+        <div className="space-y-0.5">
+          <ArtifactTitle>{title}</ArtifactTitle>
+          <ArtifactDescription>{description}</ArtifactDescription>
+        </div>
 
-        {code && (
-          <div className="flex items-center gap-1">
-            <button
-              onClick={() => navigator.clipboard.writeText(code)}
-              className="px-2 py-1 text-[10px] font-mono text-[#4a6080] hover:text-[#94a8c0] border border-[#1a2236] rounded transition-colors"
-            >
-              Copy Code
-            </button>
-            <button
-              onClick={onExport}
-              disabled={isExporting}
-              className="px-2 py-1 text-[10px] font-mono text-[#b87333] hover:text-[#d4944a] border border-[#b87333]/30 rounded transition-colors disabled:opacity-50"
-            >
-              {isExporting ? "Exporting..." : "Export"}
-            </button>
-          </div>
-        )}
-      </div>
+        <ArtifactActions>
+          <ArtifactAction
+            aria-label="Copy code"
+            icon={CopyIcon}
+            onClick={handleCopy}
+            disabled={!code}
+            tooltip="Copy circuit code"
+            label="Copy"
+          />
+          <ArtifactAction
+            aria-label={isExporting ? "Exporting" : "Export artifact"}
+            icon={DownloadIcon}
+            onClick={onExport}
+            disabled={!code || isExporting}
+            tooltip={isExporting ? "Exporting..." : "Export"}
+            label="Export"
+          >
+            {isExporting ? "Exporting..." : "Export"}
+          </ArtifactAction>
+        </ArtifactActions>
+      </ArtifactHeader>
 
-      <div className="flex-1 overflow-hidden">
+      <ArtifactContent className="h-full p-0">
         {!code ? (
-          <div className="flex items-center justify-center h-full">
-            <p className="text-xs text-[#2a3a54] font-mono">
-              Circuit preview will appear here
-            </p>
+          <div className="flex h-full items-center justify-center">
+            <p className="text-xs text-[#2a3a54]">Circuit preview will appear here</p>
           </div>
         ) : (
-          <div className="h-full w-full bg-white">
-            <RunFramePreview code={code} />
-          </div>
+          <WebPreview className="size-full">
+            <div className="h-full bg-white">
+              <RunFramePreview code={code} />
+            </div>
+          </WebPreview>
         )}
-      </div>
-    </div>
+      </ArtifactContent>
+    </Artifact>
   );
 }

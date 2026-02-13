@@ -1,16 +1,29 @@
 "use client";
 
-import { useRef, useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
+import {
+  ChainOfThought,
+  ChainOfThoughtHeader,
+  ChainOfThoughtStep,
+} from "@/components/ai-elements/chain-of-thought";
+import {
+  Confirmation,
+  ConfirmationAction,
+  ConfirmationActions,
+  ConfirmationRequest,
+} from "@/components/ai-elements/confirmation";
+import { Reasoning, ReasoningContent, ReasoningTrigger } from "@/components/ai-elements/reasoning";
+import { Tool, ToolContent, ToolHeader, ToolInput, ToolOutput } from "@/components/ai-elements/tool";
+import { ArchitecturePanel } from "./ArchitecturePanel";
 import type { ToolEvent, RetryTelemetry } from "@/lib/stream/useAgentStream";
 import type {
   DesignPhase,
   RequirementItem,
   ArchitectureNode,
   ReviewFinding,
+  PhaseStepState,
+  GateEvent,
 } from "@/lib/stream/types";
-import { ArchitecturePanel } from "./ArchitecturePanel";
-
-type Tab = "activity" | "tools" | "status" | "review";
 
 interface InfoPanelProps {
   activityText: string;
@@ -23,87 +36,50 @@ interface InfoPanelProps {
   requirements: RequirementItem[];
   architecture: ArchitectureNode[];
   reviewFindings: ReviewFinding[];
+  phaseSteps?: PhaseStepState[];
+  gateEvents?: GateEvent[];
   onReviewDecision: (
     findingId: string,
     decision: "accept" | "dismiss",
     reason?: string
   ) => void;
+  onSend?: (prompt: string) => void;
 }
 
-function formatCategoryLabel(category: string) {
-  return category.replaceAll("_", " ");
+const phases: DesignPhase[] = [
+  "requirements",
+  "architecture",
+  "implementation",
+  "review",
+  "export",
+];
+
+function toolStateFromEvent(status: ToolEvent["status"]) {
+  return status === "running" ? "input-streaming" : "output-available";
 }
 
-function phaseLabel(phase: DesignPhase) {
-  return phase.charAt(0).toUpperCase() + phase.slice(1);
+function phaseClass(phase: DesignPhase) {
+  const normalized = phase.toUpperCase();
+  return normalized.slice(0, 1) + normalized.slice(1);
 }
 
-function phaseBadgeClass(phase: DesignPhase) {
-  if (phase === "requirements") return "bg-[#2a7bf6]/20 text-[#7aa9ff] border-[#7aa9ff]/30";
-  if (phase === "architecture") return "bg-[#2ab0d4]/20 text-[#6fd8ff] border-[#6fd8ff]/30";
-  if (phase === "implementation") return "bg-[#2ad486]/20 text-[#8df5b9] border-[#8df5b9]/30";
-  if (phase === "review") return "bg-[#d4c52a]/20 text-[#f4e38a] border-[#f4e38a]/30";
-  return "bg-[#ff9a46]/20 text-[#ffd08c] border-[#ffd08c]/30";
+function normalizeStatus(
+  status: "pending" | "active" | "complete" | "blocked"
+): "pending" | "active" | "complete" {
+  return status === "pending" ? "pending" : status === "blocked" ? "active" : status;
 }
 
-function ToolEntry({ event }: { event: ToolEvent }) {
-  const [expanded, setExpanded] = useState(false);
-  const duration =
-    event.finishedAt && event.startedAt
-      ? ((event.finishedAt - event.startedAt) / 1000).toFixed(1)
-      : null;
-
-  return (
-    <div
-      className="border border-[#1a2236] rounded-lg overflow-hidden cursor-pointer hover:border-[#2a3a54] transition-colors"
-      onClick={() => setExpanded(!expanded)}
-    >
-      <div className="flex items-center gap-3 px-3 py-2">
-        <div
-          className={`size-1.5 rounded-full shrink-0 ${
-            event.status === "running"
-              ? "bg-amber-400 animate-pulse"
-              : "bg-emerald-400"
-          }`}
-        />
-        <span className="text-xs font-mono text-[#94a8c0] truncate flex-1">
-          {event.tool}
-        </span>
-        {duration && (
-          <span className="text-[10px] font-mono text-[#3a5070] shrink-0">
-            {duration}s
-          </span>
-        )}
-        <span className="text-[10px] text-[#3a5070]">
-          {expanded ? "▲" : "▼"}
-        </span>
-      </div>
-
-      {expanded && event.input != null && (
-        <div className="border-t border-[#1a2236] px-3 py-2">
-          <pre className="text-[10px] font-mono text-[#4a6080] whitespace-pre-wrap break-all max-h-32 overflow-y-auto">
-            {String(
-              typeof event.input === "string"
-                ? event.input
-                : JSON.stringify(event.input, null, 2)
-            )}
-          </pre>
-        </div>
-      )}
-
-      {expanded && event.output != null && (
-        <div className="border-t border-[#1a2236] px-3 py-2">
-          <pre className="text-[10px] font-mono text-[#5a8060] whitespace-pre-wrap break-all max-h-32 overflow-y-auto">
-            {String(
-              typeof event.output === "string"
-                ? event.output.slice(0, 500)
-                : JSON.stringify(event.output, null, 2).slice(0, 500)
-            )}
-          </pre>
-        </div>
-      )}
-    </div>
-  );
+function deriveSteps(currentPhase: DesignPhase): PhaseStepState[] {
+  const currentIndex = phases.indexOf(currentPhase);
+  return phases.map((phase, index) => ({
+    phase,
+    status:
+      index < currentIndex
+        ? ("complete" as const)
+        : index === currentIndex
+          ? ("active" as const)
+          : ("pending" as const),
+  }));
 }
 
 export function InfoPanel({
@@ -117,232 +93,216 @@ export function InfoPanel({
   requirements,
   architecture,
   reviewFindings,
+  phaseSteps,
+  gateEvents,
   onReviewDecision,
+  onSend,
 }: InfoPanelProps) {
-  const [tab, setTab] = useState<Tab>("activity");
-  const activityScrollRef = useRef<HTMLDivElement>(null);
-  const toolScrollRef = useRef<HTMLDivElement>(null);
-  const statusScrollRef = useRef<HTMLDivElement>(null);
   const openFindings = useMemo(
     () => reviewFindings.filter((finding) => finding.status === "open"),
     [reviewFindings]
   );
 
-  useEffect(() => {
-    activityScrollRef.current?.scrollTo({
-      top: activityScrollRef.current.scrollHeight,
-    });
-  }, [activityText]);
+  const steps =
+    phaseSteps && phaseSteps.length > 0
+      ? phaseSteps
+      : deriveSteps(phase);
 
-  useEffect(() => {
-    toolScrollRef.current?.scrollTo({
-      top: toolScrollRef.current.scrollHeight,
-      behavior: "smooth",
-    });
-  }, [toolEvents]);
+  const latestBlockedGate = gateEvents
+    ?.filter((event) => event.status === "blocked")
+    .slice()
+    .reverse()[0];
 
   return (
     <div className="flex flex-col h-full bg-[#080c14]">
-      <div className="flex items-center gap-1 px-4 py-2 border-b border-[#1a2236] overflow-x-auto">
-        {(
-          [
-            "activity",
-            "tools",
-            "status",
-            "review",
-          ] as Tab[]
-        ).map((t) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-mono uppercase tracking-wider whitespace-nowrap transition-colors ${
-              tab === t
-                ? "bg-[#1a2a44] text-[#00d4ff] border border-[#00d4ff]/20"
-                : "text-[#4a6080] hover:text-[#94a8c0] border border-transparent"
-            }`}
-          >
-            <div
-              className={`size-1.5 rounded-full ${
-                t === "activity"
-                  ? activityText
-                    ? "bg-amber-400 animate-pulse"
-                    : "bg-[#2a3a54]"
-                  : t === "tools"
-                    ? toolEvents.some((event) => event.status === "running")
-                      ? "bg-amber-400 animate-pulse"
-                      : "bg-[#2a3a54]"
-                    : t === "review"
-                      ? openFindings.length > 0
-                        ? "bg-amber-400 animate-pulse"
-                        : "bg-[#2a3a54]"
-                      : "bg-[#2a3a54]"
-              }`}
-            />
-            {t}
-            {t === "tools" && toolEvents.length > 0 && (
-              <span className="text-[10px] font-mono text-[#3a5070]">{toolEvents.length}</span>
-            )}
-          </button>
-        ))}
+      <div className="flex items-center justify-between border-b border-[#1a2236] px-4 py-2">
+        <span className="text-xs font-mono text-[#4a6080] uppercase tracking-wide">Workflow</span>
+        <span className="text-xs font-mono text-[#4a6080]">
+          {phaseMessage || `Current phase: ${phaseClass(phase)} (${phaseProgress}%)`}
+        </span>
       </div>
 
-      <div className="flex-1 overflow-hidden">
-        {tab === "activity" ? (
-          <div
-            ref={activityScrollRef}
-            className="h-full overflow-y-auto p-4 scrollbar-thin"
-          >
-            {activityText ? (
-              <div className="space-y-3">
-                {retryTelemetry && retryTelemetry.attemptsSeen > 0 && (
-                  <div className="border border-[#1a2236] rounded-md p-2 bg-[#0b1322]">
-                    <div className="text-[10px] font-mono uppercase tracking-wider text-[#4a6080] mb-1">
-                      Retry Telemetry
-                    </div>
-                    <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] font-mono text-[#88a3c5]">
-                      <span>
-                        Attempts: {retryTelemetry.attemptsSeen}/
-                        {retryTelemetry.maxAttempts || "?"}
-                      </span>
-                      <span>Status: {retryTelemetry.finalStatus ?? "running"}</span>
-                      <span>Total diagnostics: {retryTelemetry.diagnosticsTotal}</span>
-                      <span>
-                        First error:{" "}
-                        {retryTelemetry.firstErrorCategory
-                          ? formatCategoryLabel(retryTelemetry.firstErrorCategory)
-                          : "none"}
-                      </span>
-                      {retryTelemetry.finalReason && (
-                        <span className="col-span-2">
-                          Stop reason: {retryTelemetry.finalReason}
-                        </span>
-                      )}
-                      {Object.keys(retryTelemetry.diagnosticsByCategory).length > 0 && (
-                        <span className="col-span-2">
-                          Categories:{" "}
-                          {Object.entries(retryTelemetry.diagnosticsByCategory)
-                            .sort((a, b) => b[1] - a[1])
-                            .map(
-                              ([category, count]) =>
-                                `${formatCategoryLabel(category)} (${count})`
-                            )
-                            .join(", ")}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                )}
-                <pre className="text-xs font-mono text-[#5a7090] whitespace-pre-wrap leading-relaxed">
-                  {activityText}
-                </pre>
-              </div>
-            ) : (
-              <div className="flex items-center justify-center h-full">
-                <p className="text-xs text-[#2a3a54] font-mono">
-                  {isStreaming ? "Waiting for activity..." : "No activity yet"}
-                </p>
-              </div>
-            )}
-          </div>
-        ) : tab === "tools" ? (
-          <div
-            ref={toolScrollRef}
-            className="h-full overflow-y-auto p-3 space-y-2 scrollbar-thin"
-          >
-            {toolEvents.length === 0 ? (
-              <div className="flex items-center justify-center h-full">
-                <p className="text-xs text-[#2a3a54] font-mono">
-                  No tool activity yet
-                </p>
-              </div>
-            ) : (
-              toolEvents.map((event) => <ToolEntry key={event.id} event={event} />)
-            )}
-          </div>
-        ) : tab === "status" ? (
-          <div
-            ref={statusScrollRef}
-            className="h-full overflow-y-auto p-4 space-y-3 scrollbar-thin"
-          >
-            <div className="border border-[#1a2236] rounded-md p-2 bg-[#0b1322]">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-mono text-[#4a6080] uppercase tracking-wider">
-                  Current phase
-                </span>
-                <span
-                  className={`text-[10px] font-mono px-2 py-0.5 rounded-full border ${phaseBadgeClass(phase)}`}
-                >
-                  {phaseLabel(phase)}
-                </span>
-              </div>
-              <div className="text-[11px] text-[#88a3c5] mt-2">{phaseMessage || ""}</div>
-              <div className="h-2 bg-[#101a28] rounded-full mt-2 overflow-hidden">
-                <div
-                  className="h-full bg-[#00d4ff] transition-all"
-                  style={{ width: `${phaseProgress}%` }}
-                />
-              </div>
-            </div>
+      <div className="flex-1 space-y-4 overflow-y-auto p-3 scrollbar-thin">
+        <section className="space-y-2">
+          <ChainOfThought defaultOpen>
+            <ChainOfThoughtHeader>Design phases</ChainOfThoughtHeader>
+            {steps.map((step) => (
+              <ChainOfThoughtStep
+                key={step.phase}
+                status={normalizeStatus(step.status)}
+                label={<span className="font-medium uppercase tracking-wide text-xs">{step.phase}</span>}
+                description={
+                  step.status === "blocked"
+                    ? `Blocked by ${step.gate ?? "gate decision"}`
+                    : step.reason ?? `${phaseProgress}%`
+                }
+              />
+            ))}
+          </ChainOfThought>
+        </section>
 
-            <div className="border border-[#1a2236] rounded-md p-2 bg-[#0b1322]">
-              <div className="text-xs font-mono text-[#4a6080] uppercase tracking-wider">
-                Requirements
-              </div>
-              {requirements.length === 0 ? (
-                <p className="text-xs text-[#2a3a54] mt-2">
-                  No requirements captured yet
+        {latestBlockedGate && (
+          <section className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
+            <Confirmation
+              state="approval-requested"
+              approval={{ id: latestBlockedGate.gate }}
+            >
+              <ConfirmationRequest>
+                <p className="text-sm font-medium text-amber-300">
+                  Decision needed: {latestBlockedGate.gate}
                 </p>
-              ) : (
-                <ul className="mt-2 text-xs text-[#88a3c5] space-y-1">
-                  {requirements.map((item) => (
-                    <li key={item.id}>• {item.title}</li>
-                  ))}
-                </ul>
+                <p className="mt-1 text-xs text-amber-200/90">
+                  {latestBlockedGate.reason ||
+                    latestBlockedGate.message ||
+                    "Proceeding blocked by gating condition."}
+                </p>
+              </ConfirmationRequest>
+
+              {onSend && (
+                <ConfirmationActions className="mt-2">
+                  <ConfirmationAction
+                    variant="outline"
+                    onClick={() =>
+                      onSend(
+                        `Acknowledge gate ${latestBlockedGate.gate} and continue with the current design plan.`
+                      )
+                    }
+                  >
+                    Acknowledge
+                  </ConfirmationAction>
+                  <ConfirmationAction
+                    variant="outline"
+                    onClick={() =>
+                      onSend(`Retry the current run because ${latestBlockedGate.gate} was blocked.`)
+                    }
+                  >
+                    Retry
+                  </ConfirmationAction>
+                  <ConfirmationAction
+                    variant="outline"
+                    onClick={() =>
+                      onSend(`Proceed despite the gate block for ${latestBlockedGate.gate}.`)
+                    }
+                  >
+                    Proceed
+                  </ConfirmationAction>
+                </ConfirmationActions>
               )}
-            </div>
-
-            <ArchitecturePanel blocks={architecture} />
-          </div>
-        ) : (
-          <div className="h-full overflow-y-auto p-3 space-y-2">
-            {openFindings.length === 0 ? (
-              <div className="text-xs text-[#2a3a54] font-mono">No open findings</div>
-            ) : (
-              openFindings.map((finding) => (
-                <div
-                  key={finding.id}
-                  className="border border-[#1a2236] rounded-lg bg-[#0b1322] px-3 py-2"
-                >
-                  <div className="text-xs font-mono text-[#88a3c5]">
-                    {finding.category} · {finding.phase}
-                  </div>
-                  <p className="text-xs mt-1 text-[#5a7090]">{finding.message}</p>
-                  {finding.suggestion && (
-                    <p className="text-[11px] mt-1 text-[#5f7ea0]">
-                      Suggestion: {finding.suggestion}
-                    </p>
-                  )}
-                  <div className="mt-2 flex gap-2">
-                    <button
-                      onClick={() => onReviewDecision(finding.id, "accept")}
-                      className="px-2 py-1 text-[10px] border border-[#2a3a54] text-[#4fc77a] rounded"
-                    >
-                      Accept
-                    </button>
-                    <button
-                      onClick={() => onReviewDecision(finding.id, "dismiss")}
-                      className="px-2 py-1 text-[10px] border border-[#2a3a54] text-[#d4a85f] rounded"
-                    >
-                      Dismiss
-                    </button>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
+            </Confirmation>
+          </section>
         )}
+
+        <section className="space-y-2">
+          <h4 className="text-xs font-mono uppercase tracking-wide text-[#4a6080]">Reasoning / Activity</h4>
+          <Reasoning isStreaming={isStreaming} defaultOpen className="not-prose">
+            <ReasoningTrigger>Streaming activity log</ReasoningTrigger>
+            <ReasoningContent>
+              {activityText || "No activity emitted yet."}
+            </ReasoningContent>
+          </Reasoning>
+
+          {retryTelemetry && retryTelemetry.attemptsSeen > 0 && (
+            <div className="rounded-md border border-[#1a2236] p-2">
+              <h5 className="text-xs uppercase tracking-wide text-[#4a6080]">Retry telemetry</h5>
+              <p className="mt-1 text-xs text-[#88a3c5]">
+                Attempts: {retryTelemetry.attemptsSeen}/{retryTelemetry.maxAttempts || "?"}
+              </p>
+              <p className="text-xs text-[#88a3c5]">Final status: {retryTelemetry.finalStatus ?? "running"}</p>
+              <p className="text-xs text-[#88a3c5]">Total diagnostics: {retryTelemetry.diagnosticsTotal}</p>
+              <p className="text-xs text-[#88a3c5]">
+                First error: {retryTelemetry.firstErrorCategory ?? "none"}
+              </p>
+            </div>
+          )}
+        </section>
+
+        <section className="space-y-2">
+          <h4 className="text-xs font-mono uppercase tracking-wide text-[#4a6080]">Tools</h4>
+          {toolEvents.length === 0 ? (
+            <p className="text-xs text-[#2a3a54]">No tool activity yet</p>
+          ) : (
+            <div className="space-y-2">
+              {toolEvents.map((event) => (
+                <Tool key={event.id}>
+                  <ToolHeader
+                    title={event.tool}
+                    type="dynamic-tool"
+                    toolName={event.tool}
+                    state={toolStateFromEvent(event.status)}
+                  />
+                  <ToolContent>
+                    <ToolInput input={event.input ?? { note: "No input" }} />
+                    <ToolOutput
+                      output={event.output ?? (event.status === "running" ? "Running..." : "No output")}
+                      errorText={undefined}
+                    />
+                  </ToolContent>
+                </Tool>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section className="space-y-2">
+          <h4 className="text-xs font-mono uppercase tracking-wide text-[#4a6080]">Requirements</h4>
+          {requirements.length === 0 ? (
+            <p className="text-xs text-[#2a3a54]">No requirements yet</p>
+          ) : (
+            <ul className="space-y-2">
+              {requirements.map((requirement) => (
+                <li
+                  key={requirement.id}
+                  className="rounded-md border border-[#1a2236] p-2 text-xs text-[#88a3c5]"
+                >
+                  <p className="font-medium">{requirement.title}</p>
+                  <p className="text-[11px] text-[#4a6080]">{requirement.category}</p>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <section className="space-y-2">
+          <h4 className="text-xs font-mono uppercase tracking-wide text-[#4a6080]">Architecture</h4>
+          <ArchitecturePanel blocks={architecture} />
+        </section>
+
+        <section className="space-y-2">
+          <h4 className="text-xs font-mono uppercase tracking-wide text-[#4a6080]">
+            Review findings
+          </h4>
+          {openFindings.length === 0 ? (
+            <p className="text-xs text-[#2a3a54]">No open findings</p>
+          ) : (
+            openFindings.map((finding) => (
+              <div
+                key={finding.id}
+                className="rounded-md border border-[#1a2236] p-2"
+              >
+                <div className="text-xs text-[#88a3c5]">{finding.category} · {finding.phase}</div>
+                <p className="mt-1 text-xs text-[#5a7090]">{finding.message}</p>
+                {finding.suggestion && (
+                  <p className="mt-1 text-xs text-[#5f7ea0]">Suggestion: {finding.suggestion}</p>
+                )}
+                <div className="mt-2 flex gap-2">
+                  <button
+                    onClick={() => onReviewDecision(finding.id, "accept")}
+                    className="rounded border border-[#2a3a54] px-2 py-1 text-[10px] text-[#4fc77a]"
+                  >
+                    Accept
+                  </button>
+                  <button
+                    onClick={() => onReviewDecision(finding.id, "dismiss")}
+                    className="rounded border border-[#2a3a54] px-2 py-1 text-[10px] text-[#d4a85f]"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+        </section>
       </div>
     </div>
   );
 }
-

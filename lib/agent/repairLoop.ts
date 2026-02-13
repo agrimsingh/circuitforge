@@ -278,7 +278,7 @@ export function computeDiagnosticsScore(diagnostics: ValidationDiagnostic[], com
 
 export function createDiagnosticsSetSignature(diagnostics: ValidationDiagnostic[]) {
   if (diagnostics.length === 0) return "clean";
-  return diagnostics.map((d) => `${d.source ?? "tscircuit"}:${d.signature}`).sort().join("||");
+  return diagnostics.map((d) => d.signature).sort().join("||");
 }
 
 export function formatDiagnosticsForPrompt(diagnostics: ValidationDiagnostic[], limit = 8) {
@@ -286,7 +286,7 @@ export function formatDiagnosticsForPrompt(diagnostics: ValidationDiagnostic[], 
     .slice(0, limit)
     .map(
       (d, i) =>
-        `${i + 1}. [${d.source ?? "tscircuit"}:${d.category}] ${d.message}`,
+        `${i + 1}. [${d.category}] ${d.message}`,
     )
     .join("\n");
 }
