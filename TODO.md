@@ -14,11 +14,13 @@
 - [x] 4-panel layout with resizable splits
 - [x] SSE stream parser and state management
 - [x] Chat panel with message rendering
-- [x] Thinking panel
-- [x] Tool activity timeline
-- [x] Circuit panel with code view
-- [x] tscircuit RunFrame integration (live preview)
+- [x] Thinking panel → merged into InfoPanel (Activity tab)
+- [x] Tool activity timeline → merged into InfoPanel (Tools tab)
+- [x] Circuit panel — code tab removed, always shows preview
+- [x] tscircuit RunFrame integration (live preview, mainComponentPath fix)
 - [x] Blueprint-noir visual design
+- [x] Strip code blocks from chat (show placeholder instead)
+- [x] Activity log surfaces thinking + tool calls + subagent events
 
 ## Phase 3: Export (done)
 - [x] Export route (Circuit JSON → BOM/Gerbers/PNP → zip)
@@ -32,12 +34,23 @@
 - [x] Fix env bug (SDK env option replaces process.env)
 - [x] Document SDK/vitest incompatibility and workaround
 
+## Phase 4b: Prompt Engineering (done)
+- [x] Parts-scout: MPN-first strategy, strict search budget (max 5 calls)
+- [x] Code-writer: full tscircuit element catalog, valid footprint list
+- [x] Code-writer: dynamic board sizing (pos + largestHalf pattern)
+- [x] Code-writer: explicit pcbX/pcbY + schX/schY layout rules
+- [x] Code-writer: schematic conventions (all MCU pins, power top/ground bottom)
+- [x] Orchestrator: concise output, no code in chat, known MPN hints
+- [x] Adaptive thinking enabled on orchestrator
+- [x] Deslop: removed dead files, dead code, as-casts
+
 ## Phase 5: Polish (next)
 - [ ] Error handling and boundaries
 - [ ] Loading states and animations
 - [ ] Mobile-responsive considerations
 - [ ] React component tests (Testing Library)
 - [ ] E2E browser tests (Playwright)
+- [ ] Refine board sizing heuristic (components still escape bounds sometimes)
 
 ## Phase 6: Deploy
 - [ ] CI pipeline (GitHub Actions — run `pnpm test` + `pnpm test:integration`)

@@ -8,16 +8,15 @@ CircuitForge is a conversational AI agent that designs electronic circuits from 
 
 ```
 Browser (Next.js)
-├── Chat Panel          → streams assistant text
-├── Thinking Panel      → streams reasoning / thinking blocks
-├── Tool Activity Panel → streams tool calls + subagent events
-└── Circuit Panel       → Code tab + Live Preview (RunFrame)
+├── Chat Panel           → streams assistant text (code blocks stripped)
+├── Circuit Panel        → Live Preview only (RunFrame iframe)
+└── Info Panel (tabbed)  → Activity log + Tool call details
          │
     POST /api/agent (SSE)
          │
     Next.js Route Handler (Node runtime)
          │
-    Claude Agent SDK
+    Claude Agent SDK (adaptive thinking enabled)
     ├── Main Agent (Orchestrator) — claude-opus-4-6
     │   ├── Subagent: Parts Scout — claude-haiku-4-5
     │   ├── Subagent: Code Writer — claude-sonnet-4-5
@@ -56,10 +55,11 @@ Browser (Next.js)
 ## Data Flow
 
 1. User sends prompt → POST /api/agent
-2. Agent SDK streams SSE events (text, tool calls, subagent activity)
-3. Frontend parses SSE into 4 panels (chat, thinking, tools, code)
-4. When code is emitted, RunFrame renders live schematic/PCB/3D preview
-5. Export: client compiles via compile.tscircuit.com → server converts to zip
+2. Agent SDK streams SSE events (text, thinking, tool calls, subagent activity)
+3. Frontend parses SSE into 3 panels: chat (code blocks replaced with placeholder), preview (RunFrame), activity+tools (tabbed)
+4. Code extraction: `tsx` code blocks are pulled from assistant text → sent to RunFrame via postMessage
+5. RunFrame renders live schematic/PCB/3D preview in iframe
+6. Export: client compiles via compile.tscircuit.com → server converts to zip
 
 ## Conventions
 

@@ -46,7 +46,22 @@
 3. Read the relevant `specs/*.md` for design context.
 4. Implement following the spec.
 5. Run `pnpm test` and `pnpm lint`.
-6. Update `TODO.md` and `docs/quality.md`.
+6. **Update docs before committing** (see below).
+
+## Keeping Docs Current
+
+After any substantive change, update the relevant docs **in the same commit**:
+
+| What changed | Update |
+|---|---|
+| Task completed or new phase started | `TODO.md` — check off items, add new ones |
+| Milestone completed or project status changed | `docs/plans/active/mvp.md` — check off milestones, update "Current State" |
+| Architecture change (new panel, new route, data flow) | `docs/architecture.md` — system diagram + data flow |
+| Bug fix, quality improvement, or new tests | `docs/quality.md` — adjust grades, update known gaps + score history |
+| New file or directory | Repository Map in this file (`AGENTS.md`) |
+| New spec or changed spec | `specs/README.md` |
+
+If you're unsure whether a doc needs updating, it probably does. Stale docs are worse than no docs.
 
 ## Environment Variables
 
