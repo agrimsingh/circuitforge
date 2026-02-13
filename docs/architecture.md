@@ -4,13 +4,20 @@
 
 CircuitForge is a conversational AI agent that designs electronic circuits from natural language. Users describe what they want, and the agent reasons like a senior electronics engineer — selecting real parts, generating tscircuit code, and producing manufacturable outputs.
 
+## Milestone Update (2026-02-13)
+
+- Added first-class 5-phase flow with explicit checkpoint events (`requirements`, `architecture`, `implementation`, `review`, `export`) and progress emissions.
+- Integrated KiCad validation as a post-generation ground truth layer using `circuit-json-to-kicad` and `kicad-sch-ts`, including connectivity and electrical rule findings.
+- Added KiCad edit pathway so targeted schematic edits (`manage_component`, `manage_wire`) can be applied after generation and re-validated through the same loop.
+- Expanded export and validation contracts to support KiCad review artifacts (`kicad_sch`, `kicad_report.json`, `connectivity.json`) via `formatSet`.
+
 ## System Diagram
 
 ```
 Browser (Next.js)
 ├── Chat Panel           → streams assistant text (code blocks stripped)
 ├── Circuit Panel        → Live Preview only (RunFrame iframe)
-└── Info Panel (tabbed)  → Activity log + Tool call details + retry telemetry summary
+└── Info Panel (tabbed)  → Activity log + Tool call details + retry telemetry summary + phase + review findings
          │
     POST /api/agent (SSE) + POST /api/sandbox/quickstart
          │
@@ -26,12 +33,25 @@ Browser (Next.js)
     └── Built-in Tools: WebFetch, WebSearch
 
     Self-correction loop
+    ├── Phase state machine (requirements → architecture → implementation → review → export)
+    ├── Checkpoint events (`phase_entered`, `phase_progress`, `phase_block_done`)
     ├── Preventive routing guardrails (trace/via spacing hints)
     ├── Rolling error memory (in-memory fallback + Convex persistence)
     ├── Attempt orchestration (max retries + stagnation stop)
     ├── Compile validation (compile.tscircuit.com)
     ├── PCB diagnostic extraction (`*_error` entries)
+    ├── KiCad-backed review diagnostics (`lib/kicad/*`)
+    ├── Review finding events (`review_finding`, `review_decision`)
     └── Retry prompt injection with structured diagnostics
+
+    KiCad validation/export path
+    ├── POST /api/kicad/validate
+    │   ├── accepts `tscircuit_code` or `circuit_json`
+    │   └── returns kicad_sch, findings, connectivity, traceability
+    ├── POST /api/export
+    │   ├── `formatSet.kicad`: include kicad_sch
+    │   └── `formatSet.reviewBundle`: include kicad_report.json + connectivity.json
+    ├── POST /api/manufacturing/jlcpcb-link (v1 stub payload)
 
     Optional Isolated Execution
     └── Vercel Sandbox SDK (@vercel/sandbox)
@@ -58,11 +78,13 @@ Browser (Next.js)
 | `app/` | Next.js App Router pages and API routes |
 | `app/api/agent/` | SSE streaming endpoint + self-correction retry loop |
 | `app/api/export/` | Manufacturing export (BOM/Gerbers/PNP → zip) |
+| `app/api/kicad/` | KiCad validation endpoint |
+| `app/api/manufacturing/` | Manufacturing connector payload route |
 | `app/api/sandbox/quickstart/` | Sandbox smoke-test endpoint (create VM, run command, teardown) |
 | `components/` | React UI components |
 | `convex/` | Convex schema + HTTP actions for persistent error memory |
 | `lib/agent/` | Agent config, prompts, code extraction, repair loop utilities |
-| `lib/export/` | Circuit JSON conversion utilities |
+| `lib/kicad/` | KiCad bridge + converter + review helpers |
 | `lib/sandbox/` | Vercel Sandbox helpers for isolated execution |
 | `lib/stream/` | SSE event parsing and state management |
 | `public/` | Static assets |
@@ -70,17 +92,19 @@ Browser (Next.js)
 ## Data Flow
 
 1. User sends prompt → POST /api/agent
-2. Backend runs agent attempt #N, captures generated `tsx` code
-3. Backend validates generated code via compile API (sandbox-first, inline fallback)
-4. Backend normalizes diagnostics from `circuit_json` error entries and decides retry/stop
-5. Failed attempts are recorded in rolling error memory (in-memory and optional Convex persistence)
-6. On retries, backend injects structured diagnostics + adaptive guardrails into the next repair prompt
-7. SSE emits telemetry (`retry_start`, `validation_errors`, `retry_result`) and final assistant text
-8. Frontend derives retry summary stats (attempt count, first error type, category counts, final status) from SSE events
-9. Frontend parses SSE into 3 panels: chat (code blocks replaced with placeholder), preview (RunFrame), activity+tools (tabbed)
-10. RunFrame renders live schematic/PCB/3D preview in iframe
-11. Export: client compiles via compile.tscircuit.com → server converts to zip
-12. Sandbox setup validation: `/api/sandbox/quickstart` creates a microVM, executes a command, then tears down
+2. Backend emits phase checkpoints for `requirements/architecture/implementation/review/export`
+3. Backend runs agent attempt #N, captures generated `tsx` code
+4. Backend validates generated code via compile API (sandbox-first, inline fallback)
+5. Backend normalizes diagnostics from `circuit_json` entries and KiCad findings and decides retry/stop
+7. Failed attempts are recorded in rolling error memory (in-memory and optional Convex persistence)
+8. On retries, backend injects structured diagnostics + adaptive guardrails into the next repair prompt
+9. SSE emits telemetry (`retry_start`, `validation_errors`, `retry_result`) and final assistant text
+10. Frontend derives retry summary stats (attempt count, first error type, category counts, final status) from SSE events
+11. Frontend parses SSE into 3 panels: chat (code blocks replaced with placeholder), preview (RunFrame), activity+tools (tabbed)
+12. RunFrame renders live schematic/PCB/3D preview in iframe
+13. Export: client compiles via compile.tscircuit.com → server validates/converts to zip (+ optional KiCad bundle)
+14. Optional KiCad validation: `/api/kicad/validate` returns schema, findings, and connectivity metadata
+15. Sandbox setup validation: `/api/sandbox/quickstart` creates a microVM, executes a command, then tears down
 
 ## Conventions
 

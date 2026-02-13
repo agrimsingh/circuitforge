@@ -13,6 +13,8 @@ Build a working demo of CircuitForge: prompt → agent reasoning → parts searc
 - InfoPanel now surfaces retry telemetry summary for live debugging
 - Backend now persists adaptive self-learning memory via Convex HTTP actions (with in-memory fallback when unset)
 - Root README now documents local setup, optional Convex persistence, and sandbox auth setup
+- V2 phase orchestration now emits phase checkpoints, architecture events, and review findings in `/api/agent`
+- Export route supports optional KiCad + review bundle outputs
 
 ## Plan of Work
 1. ~~Initialize Next.js with TypeScript, Tailwind, App Router~~
@@ -27,6 +29,8 @@ Build a working demo of CircuitForge: prompt → agent reasoning → parts searc
 10. Add CI pipeline (GitHub Actions)
 11. E2E browser tests (Playwright)
 12. Improve retry loop convergence rate for complex PCB violations
+13. Add five-phase workflow completion criteria and docs
+14. Hardening pass for KiCad round-trip validation
 
 ## Milestones
 1. **Agent streams text** — Can send prompt, receive streaming SSE response
@@ -34,6 +38,8 @@ Build a working demo of CircuitForge: prompt → agent reasoning → parts searc
 3. **UI renders stream** — Panels populate from SSE events
 4. **Preview works** — RunFrame renders generated tscircuit code
 5. **Export works** — Download zip with BOM + Gerbers
+6. **Phase-aware orchestration** — Requirements + architecture checkpoints and review findings are streamed
+7. **KiCad review path** — Export includes KiCad report artifacts where requested
 
 ## Validation
 - Send "design a WiFi temperature sensor" → get real ESP32 + DHT22 parts from jlcsearch
@@ -46,10 +52,12 @@ Build a working demo of CircuitForge: prompt → agent reasoning → parts searc
 - [x] Milestone 3: UI renders stream
 - [x] Milestone 4: Preview works
 - [x] Milestone 5: Export works
+- [x] Milestone 6: Phase-aware orchestration and review flow
+- [x] Milestone 7: KiCad round-trip integration in export/review
 
 ## Known Issues (active)
 - Agent-generated circuits sometimes have components outside board bounds despite dynamic sizing prompts
 - Part search can still be noisy for unfamiliar components (description-based search fallback)
-- No CI — tests run locally only
 - Schematic/PCB layout quality depends heavily on prompt adherence
 - Retry loop can still fail closed when diagnostic signatures stagnate
+Spec coverage for five-phase workflow and KiCad integration is now in progress; export/review route-level integration tests still pending.

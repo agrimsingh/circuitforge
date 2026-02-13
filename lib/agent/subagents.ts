@@ -1,4 +1,5 @@
 import type { AgentDefinition } from "@anthropic-ai/claude-agent-sdk";
+import type { DesignPhase, ReviewFinding } from "@/lib/stream/types";
 
 export const subagents: Record<string, AgentDefinition> = {
   "parts-scout": {
@@ -250,4 +251,43 @@ For each issue found:
 If the design looks good, say so clearly. Don't invent problems.`,
     model: "opus",
   },
+  "kicad-reviewer": {
+    description:
+      "KiCad-focused design reviewer. Reads the generated design and emits actionable DRC/DFM findings by phase.",
+    prompt: `You are a KiCad review specialist for manufacturability and routing quality.
+
+Given the current design and validation artifacts, return a prioritized list of findings in this format:
+
+- [critical|warning|info] [category]: [short issue]
+- [optional recommendation]
+
+Focus on:
+1. Electrical integrity and missing nets
+2. Pin/footprint consistency
+3. Routing feasibility and clearance risk
+4. Assembly and DFM risk
+5. Basic BOM consistency and part availability
+
+If all checks are reasonable, say no blockers and keep recommendations minimal.
+`,
+    tools: ["WebFetch"],
+    model: "opus",
+  },
 };
+
+export const PHASE_SUBAGENTS: Record<DesignPhase, string[]> = {
+  requirements: ["parts-scout"],
+  architecture: ["parts-scout"],
+  implementation: ["code-writer", "validator"],
+  review: ["kicad-reviewer", "validator"],
+  export: ["kicad-reviewer"],
+};
+
+export function buildPhaseSubagentHints(activePhase: DesignPhase, findings: ReviewFinding[] = []) {
+  const base = PHASE_SUBAGENTS[activePhase] ?? ["code-writer", "validator"];
+  if (activePhase !== "review" && findings.length === 0) {
+    return base;
+  }
+
+  return Array.from(new Set([...base, ...findings.map(() => "kicad-reviewer")])) as string[];
+}

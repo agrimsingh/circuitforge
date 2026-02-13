@@ -6,6 +6,7 @@ import { ChatPanel } from "@/components/ChatPanel";
 import { InfoPanel } from "@/components/InfoPanel";
 import { CircuitPanel } from "@/components/CircuitPanel";
 import { useState, useCallback } from "react";
+import type { DesignPhase } from "@/lib/stream/types";
 
 export default function Home() {
   const {
@@ -17,16 +18,24 @@ export default function Home() {
     error,
     costUsd,
     retryTelemetry,
+    phase,
+    phaseProgress,
+    phaseMessage,
+    requirements,
+    architecture,
+    reviewFindings,
     sendPrompt,
     stop,
+    setReviewDecision,
   } = useAgentStream();
   const [isExporting, setIsExporting] = useState(false);
+  const [activePhase, setActivePhase] = useState<DesignPhase>("implementation");
 
   const handleSend = useCallback(
     (prompt: string) => {
-      sendPrompt(prompt, circuitCode || undefined);
+      sendPrompt(prompt, circuitCode || undefined, { phase: activePhase });
     },
-    [sendPrompt, circuitCode]
+    [sendPrompt, circuitCode, activePhase]
   );
 
   const handleExport = useCallback(async () => {
@@ -48,7 +57,7 @@ export default function Home() {
       const exportRes = await fetch("/api/export", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ circuit_json }),
+        body: JSON.stringify({ circuit_json, formatSet: { kicad: true, reviewBundle: true } }),
       });
       if (!exportRes.ok) {
         const body: Record<string, unknown> = await exportRes.json().catch(() => ({}));
@@ -92,6 +101,17 @@ export default function Home() {
               ${costUsd.toFixed(4)}
             </span>
           )}
+          <select
+            value={activePhase}
+            onChange={(event) => setActivePhase(event.target.value as DesignPhase)}
+            className="text-[10px] bg-[#0b1322] border border-[#1a2236] rounded px-2 py-1 text-[#94a8c0]"
+          >
+            <option value="requirements">Requirements</option>
+            <option value="architecture">Architecture</option>
+            <option value="implementation">Implementation</option>
+            <option value="review">Review</option>
+            <option value="export">Export</option>
+          </select>
           {isStreaming && (
             <div className="flex items-center gap-1.5">
               <span className="inline-block size-1.5 bg-[#00d4ff] rounded-full animate-pulse" />
@@ -137,6 +157,13 @@ export default function Home() {
                   toolEvents={toolEvents}
                   isStreaming={isStreaming}
                   retryTelemetry={retryTelemetry}
+                  phase={phase}
+                  phaseProgress={phaseProgress}
+                  phaseMessage={phaseMessage}
+                  requirements={requirements}
+                  architecture={architecture}
+                  reviewFindings={reviewFindings}
+                  onReviewDecision={setReviewDecision}
                 />
               </Panel>
             </Group>

@@ -9,17 +9,23 @@
 | `README.md` | Setup, local runbook, and optional Convex persistence guide |
 | `docs/architecture.md` | System overview, tech stack, data flow |
 | `docs/core-beliefs.md` | Agent operating principles |
+| `docs/README.md` | Documentation index and navigation hub |
+| `docs/notes/` | Competitive map, phase notes, and v2 assumptions |
 | `docs/quality.md` | Living quality scorecard |
 | `docs/plans/active/` | In-progress execution plans |
 | `docs/plans/completed/` | Archived execution plans and retrospectives |
 | `specs/` | System specifications (see `specs/README.md`) |
 | `.agents/workflows/` | Task-specific workflows |
 | `app/` | Next.js App Router (pages + API routes) |
+| `app/api/kicad/` | KiCad validation endpoint and future export connectors |
+| `app/api/manufacturing/` | Manufacturing payload helper routes |
 | `components/` | React UI components |
 | `convex/` | Convex schema + HTTP actions for persistent self-learning memory |
 | `lib/agent/` | Agent SDK config, prompts, tools, models |
+| `lib/kicad/` | KiCad conversion, bridge, and review helpers |
 | `lib/stream/` | SSE event parsing + React hook |
 | `__tests__/` | Integration tests, fixtures, helpers |
+| `.github/workflows/` | CI/CD workflows |
 | `vitest.config.mts` | Vitest config (path aliases, env loading, forks pool) |
 
 ## Commands

@@ -8,8 +8,12 @@ Hybrid export pipeline: client compiles tscircuit code to Circuit JSON, server c
    - Body: `{ fs_map: { "main.tsx": "<code>" } }`
    - Response: `{ circuit_json: [...] }`
 2. Client sends Circuit JSON to `POST /api/export`
-   - Body: `{ circuit_json: [...] }`
+   - Body: `{ circuit_json: [...], formatSet?: { kicad?: boolean, reviewBundle?: boolean } }`
 3. Server converts and returns zip
+
+### `formatSet`
+- `kicad` (boolean): include `kicad_sch` in zip
+- `reviewBundle` (boolean): include `kicad_report.json` + `connectivity.json`
 
 ## Server Conversion (`/api/export`)
 
@@ -26,7 +30,10 @@ circuitforge-export.zip
 │   ├── plated.drl
 │   └── unplated.drl
 ├── bom.csv
-└── pnp.csv
+├── pnp.csv
+├── kicad_sch (if formatSet.kicad)
+├── kicad_report.json (if formatSet.reviewBundle)
+└── connectivity.json (if formatSet.reviewBundle)
 ```
 
 ### Error Handling

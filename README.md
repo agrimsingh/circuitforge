@@ -6,8 +6,16 @@ AI-powered conversational circuit designer. Natural language to manufacturable P
 
 - Streams an agentic circuit-design workflow (`/api/agent`) from Claude Agent SDK.
 - Generates `tscircuit` code and renders live preview in the browser.
-- Exports manufacturing artifacts (BOM/Gerbers/PNP zip).
-- Runs self-correction loop for PCB/compile diagnostics.
+- Supports a 5-phase orchestration flow:
+  - requirements
+  - architecture
+  - implementation
+  - review
+  - export
+- Runs KiCad-backed review with `circuit-json-to-kicad` + `kicad-sch-ts`.
+- Exports manufacturing artifacts with optional KiCad bundles (`kicad_sch`, `kicad_report.json`, `connectivity.json`).
+- Applies surgical schematic edits with MCP-backed KiCad operations (`manage_component`, `manage_wire`).
+- Runs self-correction loop for compile/PCB diagnostics.
 - Learns recurring failure patterns with in-memory + optional Convex persistence.
 
 ## Tech Stack
@@ -16,6 +24,7 @@ AI-powered conversational circuit designer. Natural language to manufacturable P
 - TypeScript strict mode
 - Anthropic Claude Agent SDK
 - tscircuit + compile API
+- circuit-json-to-kicad + kicad-sch-ts
 - Vercel Sandbox (optional isolated compile validation)
 - Convex (optional persistent self-learning memory)
 
@@ -87,11 +96,21 @@ Without these vars, the app automatically falls back to in-memory error memory.
 - `pnpm test:all` - full non-interactive test pass
 - `pnpm convex:dev` - Convex dev deployment/watch
 - `pnpm convex:deploy` - deploy Convex functions
+- `pnpm test:sdk` - run SDK smoke test (optional, requires SDK creds)
 
 ## Project Docs
 
 - `AGENTS.md` - project map and working conventions
+- `docs/README.md` - docs index and discovery map
 - `docs/architecture.md` - architecture/data flow
 - `docs/quality.md` - quality scorecard and known gaps
 - `docs/plans/active/mvp.md` - active execution plan
 - `specs/README.md` - spec index and verification status
+
+## API Surface
+
+- `POST /api/agent` - streaming phase-aware orchestration endpoint
+- `POST /api/kicad/validate` - compile/convert + KiCad validation + report artifacts
+- `POST /api/kicad/edit` - apply MCP-style KiCad operations to a schematic
+- `POST /api/export` - manufacturing zip export with optional KiCad review bundle
+- `POST /api/manufacturing/jlcpcb-link` - v1 export payload stub for manufacturing payload

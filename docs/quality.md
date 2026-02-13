@@ -20,7 +20,7 @@ Last updated: 2026-02-13
 | Security | D | API key server-side only, validated in tests |
 | Observability | C | Activity log includes retry telemetry and InfoPanel now shows retry summary (attempts, first error, category counts, final status) |
 | Performance | F | Not started |
-| CI | F | Not started — test scripts exist but no CI pipeline |
+| CI | C | CI workflow exists (`.github/workflows/ci.yml`); needs a green run history for confidence |
 | Documentation | B | Architecture, plans, quality scorecard reflect reality |
 | Testing | C | 57 tests across 3 tiers (unit/integration/SDK) |
 
@@ -37,7 +37,7 @@ Last updated: 2026-02-13
 |-----|----------|------|
 | No React component tests | Medium | Future: Testing Library |
 | No E2E browser tests | Medium | Future: Playwright |
-| No CI pipeline | High | Set up GitHub Actions |
+| CI reliability under unstable external calls | Medium | Add guardrails for flaky integration/network tests and archive noisy regressions |
 | No error boundaries in UI | Medium | Next iteration |
 | No rate limiting | Medium | Post-MVP |
 | Convex persistence depends on secret parity across Next + Convex | Low | Keep `CIRCUITFORGE_CONVEX_SHARED_SECRET` synchronized and add health check badge |
@@ -54,3 +54,4 @@ Last updated: 2026-02-13
 - 2026-02-13: Added preventive DRC guardrails for trace/via failures and surfaced retry telemetry summary in InfoPanel.
 - 2026-02-13: Added in-memory adaptive error memory (rolling failed-attempt categories) to auto-prioritize guardrails for recurring failures. Test count now 55.
 - 2026-02-13: Added Convex-backed persistent self-learning memory (HTTP actions + fallback to in-memory). Test count now 57.
+- 2026-02-13: Added phase-aware event contract, KiCad-backed validation/export outputs, and GitHub Actions CI pipeline. Added `kicad-sch-ts@^1.0.3` backend adapter.

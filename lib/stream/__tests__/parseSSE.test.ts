@@ -74,6 +74,39 @@ describe("SSE parser", () => {
     const events = parseSSEChunk(raw);
     expect(events).toEqual([{ type: "error", message: "Something broke" }]);
   });
+
+  it("parses review and phase events", () => {
+    const raw = [
+      `data: {"type":"phase_entered","phase":"implementation","reason":"orchestrator-enter-implementation"}`,
+      `data: {"type":"phase_progress","phase":"implementation","progress":25,"message":"Compiling"}`,
+      `data: {"type":"review_finding","finding":{"id":"implementation-tscircuit|err","phase":"implementation","category":"compile_error","severity":"warning","title":"compile_error","message":"x","isBlocking":true,"status":"open","source":"tscircuit","createdAt":1700000000000}}`,
+      `data: {"type":"review_decision","decision":{"findingId":"implementation-tscircuit|err","decision":"accept","reason":"ack"}}`,
+    ].join("\n");
+
+    const events = parseSSEChunk(raw);
+    expect(events).toHaveLength(4);
+    expect(events[0]).toEqual({
+      type: "phase_entered",
+      phase: "implementation",
+      reason: "orchestrator-enter-implementation",
+    });
+    expect(events[1]).toEqual({
+      type: "phase_progress",
+      phase: "implementation",
+      progress: 25,
+      message: "Compiling",
+    });
+    expect(events[2]).toMatchObject({
+      type: "review_finding",
+      finding: expect.objectContaining({
+        id: "implementation-tscircuit|err",
+      }),
+    });
+    expect(events[3]).toMatchObject({
+      type: "review_decision",
+      decision: { findingId: "implementation-tscircuit|err", decision: "accept" },
+    });
+  });
 });
 
 describe("code extraction", () => {

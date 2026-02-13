@@ -1,11 +1,22 @@
 import { Sandbox } from "@vercel/sandbox";
 import type { ValidationDiagnostic } from "@/lib/stream/types";
+import {
+  type KicadValidationResult,
+  assessKicadFindings,
+  assessKicadFindingsFromRaw,
+} from "@/lib/kicad/review";
 
 const COMPILE_API_URL = "https://compile.tscircuit.com/api/compile";
 const SANDBOX_RUNTIME = "node24";
 const SANDBOX_TIMEOUT_MS = 2 * 60 * 1000;
 
 type CompileSource = "sandbox" | "inline";
+
+interface KicadDiagnostics {
+  findings: ValidationDiagnostic[];
+  connectivity?: unknown;
+  traceability?: unknown;
+}
 
 export interface CompileResult {
   ok: boolean;
@@ -145,12 +156,15 @@ function readObjectIds(entry: Record<string, unknown>) {
   return ids.sort();
 }
 
-function scoreCategory(category: string) {
-  if (category.includes("clearance")) return 6;
-  if (category.includes("overlap")) return 6;
-  if (category.includes("short")) return 7;
-  if (category.includes("trace")) return 5;
-  return 4;
+function scoreCategory(category: string, source: "tscircuit" | "kicad" = "tscircuit") {
+  const base =
+    category.includes("trace") || category.includes("via") || category.includes("clearance")
+      ? 6
+      : category.includes("short")
+        ? 7
+        : 4;
+
+  return source === "kicad" ? base + 1 : base;
 }
 
 function signatureWithLocation(base: string, entry: Record<string, unknown>) {
@@ -194,8 +208,9 @@ export function extractValidationDiagnostics(circuitJson: unknown[]): Validation
     diagnostics.push({
       category,
       message,
-      severity: scoreCategory(category),
+      severity: scoreCategory(category, "tscircuit"),
       signature: signatureWithLocation(signatureBase || category, entry),
+      source: "tscircuit",
     });
   }
 
@@ -210,8 +225,50 @@ export function createCompileFailureDiagnostics(errorMessage: string): Validatio
       message,
       severity: 10,
       signature: `compile_error|${message.slice(0, 300)}`,
+      source: "tscircuit",
     },
   ];
+}
+
+function mergeKicadResults(result: KicadValidationResult | null): ValidationDiagnostic[] {
+  if (!result) return [];
+  const findings = assessKicadFindingsFromRaw(result.findings);
+  return findings.map((entry) => ({
+    ...entry,
+    source: "kicad",
+  }));
+}
+
+export async function compileAndValidateWithKicad(
+  code: string,
+): Promise<{
+  compileResult: CompileResult;
+  kicadResult: KicadValidationResult | null;
+  allDiagnostics: ValidationDiagnostic[];
+}> {
+  const compileResult = await compileForValidation(code);
+  if (!compileResult.ok || !compileResult.circuitJson) {
+    return {
+      compileResult,
+      kicadResult: null,
+      allDiagnostics: createCompileFailureDiagnostics(compileResult.errorMessage ?? "compile failed"),
+    };
+  }
+
+  const kicadResult = await assessKicadFindingsFromCircuitJson(compileResult.circuitJson);
+  const kicadDiagnostics = mergeKicadResults(kicadResult);
+  const tscircuitDiagnostics = extractValidationDiagnostics(compileResult.circuitJson);
+
+  return {
+    compileResult,
+    kicadResult,
+    allDiagnostics: [...tscircuitDiagnostics, ...kicadDiagnostics],
+  };
+}
+
+export async function assessKicadFindingsFromCircuitJson(circuitJson: unknown[]): Promise<KicadValidationResult> {
+  const res = await assessKicadFindings(circuitJson);
+  return res;
 }
 
 export function computeDiagnosticsScore(diagnostics: ValidationDiagnostic[], compileFailed: boolean) {
@@ -221,12 +278,30 @@ export function computeDiagnosticsScore(diagnostics: ValidationDiagnostic[], com
 
 export function createDiagnosticsSetSignature(diagnostics: ValidationDiagnostic[]) {
   if (diagnostics.length === 0) return "clean";
-  return diagnostics.map((d) => d.signature).sort().join("||");
+  return diagnostics.map((d) => `${d.source ?? "tscircuit"}:${d.signature}`).sort().join("||");
 }
 
 export function formatDiagnosticsForPrompt(diagnostics: ValidationDiagnostic[], limit = 8) {
   return diagnostics
     .slice(0, limit)
-    .map((d, i) => `${i + 1}. [${d.category}] ${d.message}`)
+    .map(
+      (d, i) =>
+        `${i + 1}. [${d.source ?? "tscircuit"}:${d.category}] ${d.message}`,
+    )
     .join("\n");
+}
+
+export function kicadReviewSummary(result: KicadValidationResult | null): KicadDiagnostics {
+  if (!result) {
+    return { findings: [], connectivity: null, traceability: null };
+  }
+
+  return {
+    findings: assessKicadFindingsFromRaw(result.findings).map((diagnostic) => ({
+      ...diagnostic,
+      source: "kicad",
+    })),
+    connectivity: result.connectivity,
+    traceability: result.traceability,
+  };
 }

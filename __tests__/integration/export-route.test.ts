@@ -91,6 +91,38 @@ describe("Export route — zip generation", () => {
     expect(fileNames.includes("pnp.csv")).toBe(true);
   });
 
+  it("includes kicad_sch when formatSet.kicad is true", async () => {
+    const res = await POST(
+      makeRequest({
+        circuit_json: simpleCircuit,
+        formatSet: { kicad: true },
+      }),
+    );
+    const buffer = await res.arrayBuffer();
+    const zip = await JSZip.loadAsync(buffer);
+
+    expect(zip.files["kicad_sch"]).toBeDefined();
+    const kicadContent = await zip.files["kicad_sch"].async("string");
+    expect(kicadContent).toContain("(kicad_sch");
+  });
+
+  it("includes review bundle files when reviewBundle is true", async () => {
+    const res = await POST(
+      makeRequest({
+        circuit_json: simpleCircuit,
+        formatSet: { reviewBundle: true },
+      }),
+    );
+    const buffer = await res.arrayBuffer();
+    const zip = await JSZip.loadAsync(buffer);
+
+    expect(zip.files["connectivity.json"]).toBeDefined();
+    expect(zip.files["kicad_report.json"]).toBeDefined();
+
+    const report = JSON.parse(await zip.files["kicad_report.json"].async("string"));
+    expect(report.findings).toBeDefined();
+  });
+
   it("handles empty circuit_json array gracefully", async () => {
     const res = await POST(makeRequest({ circuit_json: [] }));
     expect([200, 500]).toContain(res.status);

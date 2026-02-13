@@ -58,8 +58,18 @@
 - [ ] Refine board sizing heuristic (components still escape bounds sometimes)
 
 ## Phase 6: Deploy
-- [ ] CI pipeline (GitHub Actions — run `pnpm test` + `pnpm test:integration`)
+- [x] CI pipeline (GitHub Actions — run `pnpm test` + `pnpm test:integration`)
 - [ ] Vercel deployment configuration
 - [x] Vercel Sandbox SDK scaffold + smoke test endpoint (`/api/sandbox/quickstart`)
 - [x] README with setup instructions
 - [ ] Demo recording prep
+
+## Phase 7: Competitive-First V2 Execution
+- [x] Add phase state/event types for `requirements | architecture | implementation | review | export`
+- [x] Add phase-aware agent orchestration and review findings stream events
+- [x] Add KiCad validation route and conversion/review helpers
+- [x] Wire optional KiCad artifacts into export bundle (`kicad_sch`, `kicad_report.json`, `connectivity.json`)
+- [x] Add manufacturing payload stub route (`/api/manufacturing/jlcpcb-link`)
+- [x] Add docs/specs for five-phase workflow and KiCad integration
+- [x] Add CI workflow at `.github/workflows/ci.yml`
+- [ ] Add integration tests for kicad validation/export/phase checkpoints
