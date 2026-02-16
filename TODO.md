@@ -60,7 +60,7 @@
 - [x] Evidence stream contract (`iteration_diff`, `final_summary`, `timing_metric`)
 - [x] Review UX upgrades (severity filters, bulk decisions, fix-critical rerun action)
 - [x] Export readiness checklist with explicit risky-export override
-- [x] Convergence tuning: blocker-first retries + advisory warning tolerance + timeout-to-retry behavior
+- [x] Convergence tuning: blocker-first retries + advisory warning tolerance + abort/timeout-like error-to-retry behavior
 - [x] Live smoke quality bar enforced (`readiness >= 70`, zero blocking diagnostics)
 - [x] Deterministic diagnostic family routing (`auto_fixable` / `should_demote` / `must_repair`) with repair evidence SSE events
 - [x] Tightened active-pin classification for `kicad_unconnected_pin` routing

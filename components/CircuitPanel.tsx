@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useEffect, useCallback, useState } from "react";
+import dynamic from "next/dynamic";
 import {
   Artifact,
   ArtifactAction,
@@ -12,6 +13,12 @@ import {
 } from "@/components/ai-elements/artifact";
 import { WebPreview } from "@/components/ai-elements/web-preview";
 import { CheckIcon, CopyIcon, DownloadIcon, CpuIcon } from "lucide-react";
+import type { ArchitectureNode } from "@/lib/stream/types";
+
+const ArchitecturePanel = dynamic(
+  () => import("./ArchitecturePanel").then((m) => ({ default: m.ArchitecturePanel })),
+  { ssr: false }
+);
 
 interface CircuitPanelProps {
   code: string;
@@ -23,6 +30,7 @@ interface CircuitPanelProps {
   description?: string;
   readinessScore?: number | null;
   openCriticalFindings?: number;
+  architecture?: ArchitectureNode[];
 }
 
 function RunFramePreview({ code }: { code: string }) {
@@ -93,8 +101,16 @@ export function CircuitPanel({
   description = "Generated artifact from the active assistant run",
   readinessScore = null,
   openCriticalFindings = 0,
+  architecture = [],
 }: CircuitPanelProps) {
   const [copied, setCopied] = useState(false);
+  const [activeTab, setActiveTab] = useState<"circuit" | "architecture">("circuit");
+
+  useEffect(() => {
+    if (architecture.length > 0 && !code) {
+      setActiveTab("architecture");
+    }
+  }, [architecture.length, code]);
 
   const handleCopy = useCallback(async () => {
     try {
@@ -136,6 +152,31 @@ export function CircuitPanel({
           )}
         </div>
 
+        <div className="flex items-center gap-1 rounded-lg bg-surface p-0.5 border border-border/30">
+          <button
+            onClick={() => setActiveTab("circuit")}
+            className={`text-xs px-3 py-1 rounded-md transition-colors ${
+              activeTab === "circuit"
+                ? "bg-accent/15 text-accent font-medium"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            Circuit
+          </button>
+          {architecture.length > 0 && (
+            <button
+              onClick={() => setActiveTab("architecture")}
+              className={`text-xs px-3 py-1 rounded-md transition-colors ${
+                activeTab === "architecture"
+                  ? "bg-accent/15 text-accent font-medium"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Architecture
+            </button>
+          )}
+        </div>
+
         <ArtifactActions>
           <ArtifactAction
             aria-label={copied ? "Copied" : "Copy code"}
@@ -159,7 +200,11 @@ export function CircuitPanel({
       </ArtifactHeader>
 
       <ArtifactContent className="h-full p-0">
-        {!code ? (
+        {activeTab === "architecture" && architecture.length > 0 ? (
+          <div className="h-full">
+            <ArchitecturePanel blocks={architecture} />
+          </div>
+        ) : !code ? (
           isStreaming ? (
             <div className="flex h-full flex-col items-center justify-center gap-5 animate-pulse">
               <div className="relative">

@@ -6,15 +6,10 @@ import { ChatPanel } from "@/components/ChatPanel";
 import { InfoPanel } from "@/components/InfoPanel";
 import { CircuitPanel } from "@/components/CircuitPanel";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
-import { useState, useCallback, useEffect } from "react";
-import type { DesignPhase } from "@/lib/stream/types";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
+import { useState, useCallback } from "react";
+import { PanelRightIcon } from "lucide-react";
+import { motion } from "motion/react";
 
 export default function Home() {
   const {
@@ -46,14 +41,18 @@ export default function Home() {
   } = useAgentStream();
   const [isExporting, setIsExporting] = useState(false);
   const [exportStage, setExportStage] = useState<"compiling" | "packaging" | "downloading" | null>(null);
-  const [activePhase, setActivePhase] = useState<DesignPhase>("implementation");
-  const [isCompact, setIsCompact] = useState(false);
+  const [showDrawer, setShowDrawer] = useState(false);
   const [notification, setNotification] = useState<string | null>(null);
   const [showExportChecklist, setShowExportChecklist] = useState(false);
+
+  const hasCode = Boolean(circuitCode) || architecture.length > 0;
 
   const openCriticalFindings = reviewFindings.filter(
     (finding) => finding.status === "open" && finding.severity === "critical",
   ).length;
+
+  const openFindingsCount = reviewFindings.filter((f) => f.status === "open").length;
+
   const exportChecks = [
     { label: "Circuit code generated", passed: Boolean(circuitCode) },
     { label: "No open critical findings", passed: openCriticalFindings === 0 },
@@ -65,20 +64,11 @@ export default function Home() {
   ];
   const hasExportBlockers = exportChecks.some((item) => !item.passed);
 
-  useEffect(() => {
-    const media = window.matchMedia("(max-width: 1023px)");
-    const handleChange = (event: MediaQueryListEvent) => setIsCompact(event.matches);
-    setIsCompact(media.matches);
-
-    media.addEventListener("change", handleChange);
-    return () => media.removeEventListener("change", handleChange);
-  }, []);
-
   const handleSend = useCallback(
     (prompt: string) => {
-      sendPrompt(prompt, circuitCode || undefined, { phase: activePhase });
+      sendPrompt(prompt, circuitCode || undefined, { phase });
     },
-    [sendPrompt, circuitCode, activePhase]
+    [sendPrompt, circuitCode, phase]
   );
 
   const performExport = useCallback(async (allowRiskyExport: boolean) => {
@@ -165,14 +155,30 @@ export default function Home() {
     <div className="h-dvh flex flex-col blueprint-grid">
       <header className="flex items-center justify-between px-5 py-2.5 border-b border-border/50 bg-surface/95 backdrop-blur-sm z-10 relative">
         <div className="absolute bottom-0 left-0 right-0 h-px bg-linear-to-r from-transparent via-accent/20 to-transparent" />
-        <div className="flex items-center gap-2.5">
-          <div className="flex items-center gap-0.5">
-            <span className="text-foreground text-sm font-semibold">Circuit</span>
-            <span className="text-accent text-sm font-semibold">Forge</span>
+
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1">
+            <span className="text-foreground text-sm font-semibold tracking-tight">Circuit</span>
+            <span className="text-accent text-sm font-semibold tracking-tight">Forge</span>
           </div>
           <span className="text-[9px] font-mono text-accent/40 bg-accent/5 border border-accent/10 rounded px-1.5 py-0.5">
             v0.1
           </span>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] font-mono text-muted-foreground/70 uppercase tracking-wider">
+            {phase}
+          </span>
+          {isStreaming && phaseProgress > 0 && (
+            <div className="w-16 h-1 rounded-full bg-border/40 overflow-hidden">
+              <motion.div
+                className="h-full bg-accent/60 rounded-full"
+                animate={{ width: `${phaseProgress}%` }}
+                transition={{ type: "spring", damping: 25, stiffness: 200 }}
+              />
+            </div>
+          )}
         </div>
 
         <div className="flex items-center gap-3">
@@ -181,18 +187,6 @@ export default function Home() {
               ${costUsd.toFixed(4)}
             </span>
           )}
-          <Select value={activePhase} onValueChange={(value) => setActivePhase(value as DesignPhase)}>
-            <SelectTrigger className="h-7 w-auto gap-1 text-[10px] bg-surface-raised border-border text-secondary-foreground">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="requirements">Requirements</SelectItem>
-              <SelectItem value="architecture">Architecture</SelectItem>
-              <SelectItem value="implementation">Implementation</SelectItem>
-              <SelectItem value="review">Review</SelectItem>
-              <SelectItem value="export">Export</SelectItem>
-            </SelectContent>
-          </Select>
           {isStreaming && (
             <div className="flex items-center gap-1.5">
               <span className="inline-block size-1.5 bg-accent rounded-full animate-pulse shadow-[0_0_6px_rgba(6,182,212,0.4)]" />
@@ -204,80 +198,42 @@ export default function Home() {
               {error}
             </span>
           )}
+          <button
+            onClick={() => setShowDrawer(true)}
+            className="relative flex items-center justify-center size-8 rounded-md border border-border/40 bg-surface-raised/50 text-muted-foreground transition-colors hover:text-foreground hover:border-accent/20"
+            aria-label="Open workflow details"
+          >
+            <PanelRightIcon className="size-4" />
+            {openFindingsCount > 0 && (
+              <span className="absolute -top-1 -right-1 flex items-center justify-center size-4 rounded-full bg-accent text-[9px] font-mono text-accent-foreground font-medium">
+                {openFindingsCount > 9 ? "9+" : openFindingsCount}
+              </span>
+            )}
+          </button>
         </div>
       </header>
 
       <main className="flex-1 overflow-hidden">
-        {isCompact ? (
-          <Group orientation="vertical" className="h-full">
-            <Panel defaultSize={30} minSize={20}>
-              <ErrorBoundary fallbackLabel="Chat">
-                <ChatPanel
-                  messages={messages}
-                  thinkingText={thinkingText}
-                  toolEvents={toolEvents}
-                  phaseSteps={phaseSteps}
-                  gateEvents={gateEvents}
-                  isStreaming={isStreaming}
-                  onSend={handleSend}
-                  onStop={stop}
-                  phaseMessage={phaseMessage}
-                  phaseProgress={phaseProgress}
-                  retryTelemetry={retryTelemetry}
-                  systemEvents={systemEvents}
-                />
-              </ErrorBoundary>
-            </Panel>
-
-            <Separator className="h-[3px] hover:bg-foreground/5 transition-colors" />
-
-            <Panel defaultSize={40} minSize={25}>
-              <ErrorBoundary fallbackLabel="Circuit">
-                <CircuitPanel
-                  code={circuitCode}
-                  onExport={handleExport}
-                  isExporting={isExporting}
-                  isStreaming={isStreaming}
-                  exportStage={exportStage}
-                  title="Artifact"
-                  description={phaseMessage ?? `Phase ${phase}`}
-                  readinessScore={finalSummary?.manufacturingReadinessScore ?? null}
-                  openCriticalFindings={openCriticalFindings}
-                />
-              </ErrorBoundary>
-            </Panel>
-
-            <Separator className="h-[3px] hover:bg-foreground/5 transition-colors" />
-
-            <Panel defaultSize={30} minSize={20} collapsible>
-              <ErrorBoundary fallbackLabel="Info">
-                <InfoPanel
-                  activityText={thinkingText}
-                  toolEvents={toolEvents}
-                  isStreaming={isStreaming}
-                  retryTelemetry={retryTelemetry}
-                  phase={phase}
-                  phaseProgress={phaseProgress}
-                  phaseMessage={phaseMessage}
-                  requirements={requirements}
-                  architecture={architecture}
-                  reviewFindings={reviewFindings}
-                  iterationDiffs={iterationDiffs}
-                  finalSummary={finalSummary}
-                  timingMetrics={timingMetrics}
-                  repairPlans={repairPlans}
-                  repairResults={repairResults}
-                  phaseSteps={phaseSteps}
-                  gateEvents={gateEvents}
-                  onReviewDecision={setReviewDecision}
-                  onSend={handleSend}
-                />
-              </ErrorBoundary>
-            </Panel>
-          </Group>
+        {!hasCode ? (
+          <ErrorBoundary fallbackLabel="Chat">
+            <ChatPanel
+              messages={messages}
+              thinkingText={thinkingText}
+              toolEvents={toolEvents}
+              phaseSteps={phaseSteps}
+              gateEvents={gateEvents}
+              isStreaming={isStreaming}
+              onSend={handleSend}
+              onStop={stop}
+              phaseMessage={phaseMessage}
+              phaseProgress={phaseProgress}
+              retryTelemetry={retryTelemetry}
+              systemEvents={systemEvents}
+            />
+          </ErrorBoundary>
         ) : (
           <Group orientation="horizontal" className="h-full">
-            <Panel defaultSize={30} minSize={20}>
+            <Panel defaultSize={40} minSize={25}>
               <ErrorBoundary fallbackLabel="Chat">
                 <ChatPanel
                   messages={messages}
@@ -298,56 +254,61 @@ export default function Home() {
 
             <Separator className="w-[3px] hover:bg-foreground/5 transition-colors" />
 
-            <Panel defaultSize={70} minSize={40}>
-              <Group orientation="vertical" className="h-full">
-                <Panel defaultSize={70} minSize={30}>
-                  <ErrorBoundary fallbackLabel="Circuit">
-                    <CircuitPanel
-                      code={circuitCode}
-                      onExport={handleExport}
-                      isExporting={isExporting}
-                      isStreaming={isStreaming}
-                      exportStage={exportStage}
-                      title="Artifact"
-                      description={phaseMessage ?? `Phase ${phase}`}
-                      readinessScore={finalSummary?.manufacturingReadinessScore ?? null}
-                      openCriticalFindings={openCriticalFindings}
-                    />
-                  </ErrorBoundary>
-                </Panel>
-
-                <Separator className="h-[3px] hover:bg-foreground/5 transition-colors" />
-
-                <Panel defaultSize={30} minSize={10} collapsible>
-                  <ErrorBoundary fallbackLabel="Info">
-                    <InfoPanel
-                      activityText={thinkingText}
-                      toolEvents={toolEvents}
-                      isStreaming={isStreaming}
-                      retryTelemetry={retryTelemetry}
-                      phase={phase}
-                      phaseProgress={phaseProgress}
-                      phaseMessage={phaseMessage}
-                      requirements={requirements}
-                      architecture={architecture}
-                      reviewFindings={reviewFindings}
-                      iterationDiffs={iterationDiffs}
-                      finalSummary={finalSummary}
-                      timingMetrics={timingMetrics}
-                      repairPlans={repairPlans}
-                      repairResults={repairResults}
-                      phaseSteps={phaseSteps}
-                      gateEvents={gateEvents}
-                      onReviewDecision={setReviewDecision}
-                      onSend={handleSend}
-                    />
-                  </ErrorBoundary>
-                </Panel>
-              </Group>
+            <Panel defaultSize={60} minSize={35}>
+              <ErrorBoundary fallbackLabel="Circuit">
+                <CircuitPanel
+                  code={circuitCode}
+                  onExport={handleExport}
+                  isExporting={isExporting}
+                  isStreaming={isStreaming}
+                  exportStage={exportStage}
+                  title="Artifact"
+                  description={phaseMessage ?? `Phase ${phase}`}
+                  readinessScore={finalSummary?.manufacturingReadinessScore ?? null}
+                  openCriticalFindings={openCriticalFindings}
+                  architecture={architecture}
+                />
+              </ErrorBoundary>
             </Panel>
           </Group>
         )}
       </main>
+
+      <Sheet open={showDrawer} onOpenChange={setShowDrawer}>
+        <SheetContent side="right" className="overflow-hidden flex flex-col">
+          <SheetHeader>
+            <SheetTitle>Workflow</SheetTitle>
+            <SheetDescription>
+              Phase progress, tools, requirements, and review findings
+            </SheetDescription>
+          </SheetHeader>
+          <div className="flex-1 overflow-hidden">
+            <ErrorBoundary fallbackLabel="Info">
+              <InfoPanel
+                activityText={thinkingText}
+                toolEvents={toolEvents}
+                isStreaming={isStreaming}
+                retryTelemetry={retryTelemetry}
+                phase={phase}
+                phaseProgress={phaseProgress}
+                phaseMessage={phaseMessage}
+                requirements={requirements}
+                architecture={architecture}
+                reviewFindings={reviewFindings}
+                iterationDiffs={iterationDiffs}
+                finalSummary={finalSummary}
+                timingMetrics={timingMetrics}
+                repairPlans={repairPlans}
+                repairResults={repairResults}
+                phaseSteps={phaseSteps}
+                gateEvents={gateEvents}
+                onReviewDecision={setReviewDecision}
+                onSend={handleSend}
+              />
+            </ErrorBoundary>
+          </div>
+        </SheetContent>
+      </Sheet>
 
       {showExportChecklist && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 p-4">

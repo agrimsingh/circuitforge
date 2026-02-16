@@ -8,13 +8,25 @@ import {
   PromptInputSubmit,
   PromptInputTextarea,
 } from "@/components/ai-elements/prompt-input";
-import { Reasoning, ReasoningContent, ReasoningTrigger } from "@/components/ai-elements/reasoning";
-import { Tool, ToolContent, ToolHeader, ToolInput, ToolOutput } from "@/components/ai-elements/tool";
+import {
+  ChainOfThought,
+  ChainOfThoughtHeader,
+  ChainOfThoughtContent,
+  ChainOfThoughtStep,
+} from "@/components/ai-elements/chain-of-thought";
 import type { AgentMessage } from "@/lib/stream/useAgentStream";
 import type { ToolEvent } from "@/lib/stream/useAgentStream";
 import type { PhaseStepState, GateEvent } from "@/lib/stream/types";
-import { ChevronRightIcon, CpuIcon } from "lucide-react";
-import { motion, AnimatePresence } from "motion/react";
+import {
+  ChevronRightIcon,
+  CpuIcon,
+  SearchIcon,
+  WrenchIcon,
+  CheckCircleIcon,
+  AlertTriangleIcon,
+  ZapIcon,
+  CircleDotIcon,
+} from "lucide-react";
 
 type ChatPanelProps = {
   messages: AgentMessage[];
@@ -64,145 +76,140 @@ const starterPrompts = [
   "Give me a simple single-sided LED blink board with mounting holes",
 ];
 
-function toolStateFromEvent(status: ToolEvent["status"]) {
-  return status === "running" ? "input-streaming" : "output-available";
-}
-
-function formatToolTime(startedAt: number, finishedAt?: number) {
-  if (!finishedAt) return null;
-  return `${((finishedAt - startedAt) / 1000).toFixed(1)}s`;
-}
-
 type SystemEventItem = NonNullable<ChatPanelProps["systemEvents"]>[number];
 
-function StatusBanner({
-  phaseMessage,
-  phaseProgress,
-  retryTelemetry,
-}: {
-  phaseMessage?: string | null;
-  phaseProgress?: number;
-  retryTelemetry?: ChatPanelProps["retryTelemetry"];
-}) {
-  const showAttempt = retryTelemetry && retryTelemetry.attemptsSeen > 0;
+type CoTStep = {
+  id: string;
+  label: string;
+  description?: string;
+  status: "complete" | "active" | "pending";
+  icon?: import("lucide-react").LucideIcon;
+  at: number;
+};
 
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: 8 }}
-      transition={{ duration: 0.2, ease: [0.32, 0.72, 0, 1] }}
-      className="mx-3 mb-2 rounded-lg border border-border/40 bg-surface-raised/80 backdrop-blur-sm px-3 py-2 shadow-sm"
-    >
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="inline-block size-1.5 rounded-full bg-accent animate-pulse shrink-0" />
-          <span className="text-xs text-muted-foreground truncate">
-            {phaseMessage || "Working…"}
-          </span>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          {showAttempt && (
-            <span className="text-[10px] font-mono text-muted-foreground/70 rounded border border-border/30 px-1.5 py-0.5">
-              A{retryTelemetry!.attemptsSeen}/{retryTelemetry!.maxAttempts || "?"}
-            </span>
-          )}
-          {typeof phaseProgress === "number" && phaseProgress > 0 && (
-            <span className="text-[10px] font-mono text-accent/80">
-              {phaseProgress}%
-            </span>
-          )}
-        </div>
-      </div>
-      {typeof phaseProgress === "number" && phaseProgress > 0 && (
-        <div className="mt-1.5 h-0.5 w-full rounded-full bg-border/30 overflow-hidden">
-          <motion.div
-            className="h-full bg-accent/60 origin-left rounded-full"
-            initial={{ scaleX: 0 }}
-            animate={{ scaleX: phaseProgress / 100 }}
-            transition={{ type: "spring", damping: 25, stiffness: 200 }}
-          />
-        </div>
-      )}
-    </motion.div>
-  );
+function humanizeToolName(tool: string, input?: unknown): string {
+  const inp = input as Record<string, unknown> | undefined;
+  if (tool.includes("search_parts"))
+    return `Searching parts${inp?.q ? `: ${inp.q}` : ""}`;
+  if (tool.includes("WebSearch") || tool === "WebSearch")
+    return `Looking up${inp?.query ? `: ${String(inp.query).slice(0, 60)}` : " reference data"}`;
+  if (tool.includes("validate") || tool.includes("Validate"))
+    return "Running circuit validator";
+  if (tool.includes("compile") || tool.includes("Compile"))
+    return "Compiling circuit";
+  if (tool.includes("Task"))
+    return `Running sub-task${inp?.description ? `: ${inp.description}` : ""}`;
+  if (tool.startsWith("Subagent: ")) {
+    const agent = tool.replace("Subagent: ", "");
+    if (agent.includes("parts")) return "Searching component databases";
+    if (agent.includes("code")) return "Writing circuit code";
+    if (agent.includes("review") || agent.includes("valid"))
+      return "Reviewing design";
+    return `Running ${agent}`;
+  }
+  return tool.replace(/^mcp_[^_]+__/, "").replace(/_/g, " ");
 }
 
-function SystemEventCard({ event }: { event: SystemEventItem }) {
-  let borderColor = "border-border/40";
-  let icon = "●";
-  let content: React.ReactNode = null;
+function toolEventToStep(ev: ToolEvent): CoTStep {
+  return {
+    id: ev.id,
+    label: humanizeToolName(ev.tool, ev.input),
+    description: ev.finishedAt
+      ? `${((ev.finishedAt - ev.startedAt) / 1000).toFixed(1)}s`
+      : undefined,
+    status: ev.status === "running" ? "active" : "complete",
+    icon:
+      ev.tool.includes("search") || ev.tool.includes("Search")
+        ? SearchIcon
+        : ev.tool.includes("Task")
+          ? CircleDotIcon
+          : undefined,
+    at: ev.startedAt,
+  };
+}
 
-  switch (event.type) {
+function systemEventToStep(ev: SystemEventItem): CoTStep | null {
+  switch (ev.type) {
     case "retry_start":
-      borderColor = "border-amber-500/40";
-      icon = "↻";
-      content = (
-        <>
-          <span className="font-mono text-amber-400/90">Attempt {event.attempt}/{event.maxAttempts || "?"}</span>
-          <span className="text-muted-foreground"> — re-evaluating circuit</span>
-        </>
-      );
-      break;
-    case "validation_summary":
-      borderColor = "border-red-500/30";
-      icon = "⚠";
-      content = (
-        <>
-          <span className="font-mono text-red-400/80">{event.diagnosticsCount} issue{event.diagnosticsCount !== 1 ? "s" : ""} found</span>
-          {event.diagnosticsByCategory && Object.keys(event.diagnosticsByCategory).length > 0 && (
-            <span className="text-muted-foreground/60"> · {Object.entries(event.diagnosticsByCategory).map(([k, v]) => `${k}: ${v}`).join(", ")}</span>
-          )}
-        </>
-      );
-      break;
+      return {
+        id: ev.id,
+        label: `Validating circuit (attempt ${ev.attempt}/${ev.maxAttempts || "?"})`,
+        status: "active",
+        icon: ZapIcon,
+        at: ev.at,
+      };
+    case "validation_summary": {
+      const count = ev.diagnosticsCount ?? 0;
+      const cats = ev.diagnosticsByCategory
+        ? Object.entries(ev.diagnosticsByCategory)
+            .map(
+              ([k, v]) =>
+                `${v} ${k.replace(/^kicad_/, "").replace(/_/g, " ")}`
+            )
+            .join(", ")
+        : undefined;
+      return {
+        id: ev.id,
+        label:
+          count === 0
+            ? "No issues found"
+            : `${count} issue${count !== 1 ? "s" : ""} found`,
+        description: cats,
+        status: "complete",
+        icon: count > 0 ? AlertTriangleIcon : CheckCircleIcon,
+        at: ev.at,
+      };
+    }
     case "retry_result":
-      borderColor = event.status === "clean" ? "border-emerald-500/40" : event.status === "failed" ? "border-red-500/40" : "border-amber-500/40";
-      icon = event.status === "clean" ? "✓" : event.status === "failed" ? "✗" : "↻";
-      content = (
-        <>
-          <span className={`font-mono ${event.status === "clean" ? "text-emerald-400/90" : event.status === "failed" ? "text-red-400/90" : "text-amber-400/90"}`}>
-            {event.status === "clean" ? "Clean compile" : event.status === "failed" ? "Attempt failed" : "Retrying"}
-          </span>
-          {event.diagnosticsCount != null && (
-            <span className="text-muted-foreground"> · {event.diagnosticsCount} remaining</span>
-          )}
-        </>
-      );
-      break;
-    case "repair_result":
-      borderColor = "border-cyan-500/30";
-      icon = "🔧";
-      content = (
-        <>
-          <span className="font-mono text-cyan-400/80">Repair: {event.blockingBefore} → {event.blockingAfter} blocking</span>
-          {(event.autoFixedCount ?? 0) > 0 && <span className="text-muted-foreground"> · auto-fixed {event.autoFixedCount}</span>}
-        </>
-      );
-      break;
+      return {
+        id: ev.id,
+        label:
+          ev.status === "clean"
+            ? "Design validated successfully"
+            : ev.status === "failed"
+              ? `Attempt failed${ev.diagnosticsCount ? ` — ${ev.diagnosticsCount} issues remain` : ""}`
+              : "Retrying validation",
+        status: "complete",
+        icon:
+          ev.status === "clean"
+            ? CheckCircleIcon
+            : ev.status === "failed"
+              ? AlertTriangleIcon
+              : ZapIcon,
+        at: ev.at,
+      };
+    case "repair_result": {
+      const fixed = ev.autoFixedCount ?? 0;
+      return {
+        id: ev.id,
+        label:
+          fixed > 0
+            ? `Auto-fixed ${fixed} issue${fixed !== 1 ? "s" : ""}`
+            : `Repaired: ${ev.blockingBefore} → ${ev.blockingAfter} blocking`,
+        status: "complete",
+        icon: WrenchIcon,
+        at: ev.at,
+      };
+    }
     case "gate_passed":
-      borderColor = "border-emerald-500/40";
-      icon = "✅";
-      content = <span className="font-mono text-emerald-400/90">Gate passed: {event.gate}</span>;
-      break;
+      return {
+        id: ev.id,
+        label: "Circuit validated successfully",
+        status: "complete",
+        icon: CheckCircleIcon,
+        at: ev.at,
+      };
     case "gate_blocked":
-      borderColor = "border-red-500/40";
-      icon = "🛑";
-      content = <span className="font-mono text-red-400/90">Gate blocked: {event.gate}</span>;
-      break;
+      return {
+        id: ev.id,
+        label: `Auto-repairing — ${ev.message || "validation issues"}`,
+        status: "active",
+        icon: WrenchIcon,
+        at: ev.at,
+      };
+    default:
+      return null;
   }
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 6 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.15, ease: "easeOut" }}
-      className={`border-l-2 ${borderColor} bg-surface-raised/50 rounded-r-md px-3 py-2 text-xs`}
-    >
-      <span className="mr-1.5">{icon}</span>
-      {content}
-    </motion.div>
-  );
 }
 
 export function ChatPanel({
@@ -232,7 +239,7 @@ export function ChatPanel({
         <ConversationContent>
           {messages.length === 0 ? (
             <ConversationEmptyState>
-              <div className="space-y-8 max-w-md mx-auto">
+              <div className="space-y-8 max-w-lg mx-auto">
                 <div className="space-y-2">
                   <h3 className="text-lg font-semibold text-foreground tracking-tight text-balance">
                     What are you building?
@@ -269,69 +276,48 @@ export function ChatPanel({
                 </Message>
               ))}
 
-              {thinkingText && (
-                <Reasoning isStreaming={isStreaming} defaultOpen={isStreaming} className="not-prose">
-                  <ReasoningTrigger>Agent reasoning</ReasoningTrigger>
-                  <ReasoningContent>{thinkingText}</ReasoningContent>
-                </Reasoning>
-              )}
+              {(toolEvents.length > 0 ||
+                (systemEvents && systemEvents.length > 0)) &&
+                (() => {
+                  const steps: CoTStep[] = [
+                    ...toolEvents.map(toolEventToStep),
+                    ...(systemEvents ?? [])
+                      .map(systemEventToStep)
+                      .filter((s): s is CoTStep => s !== null),
+                  ].sort((a, b) => a.at - b.at);
 
-              {toolEvents.length > 0 && (
-                <div className="space-y-2">
-                  {toolEvents.map((event) => {
-                const duration = formatToolTime(event.startedAt, event.finishedAt);
-                    return (
-                      <Tool key={event.id} defaultOpen={isStreaming && event.status === "running"}>
-                        <ToolHeader
-                          title={event.tool}
-                          type="dynamic-tool"
-                          toolName={event.tool}
-                          state={toolStateFromEvent(event.status)}
-                        />
-                        <ToolContent>
-                          <ToolInput
-                            input={
-                              event.input ?? {
-                                message: "No input payload",
-                              }
+                  return (
+                    <ChainOfThought
+                      defaultOpen={isStreaming}
+                      open={isStreaming ? true : undefined}
+                    >
+                      <ChainOfThoughtHeader>
+                        {isStreaming
+                          ? "Working on your circuit…"
+                          : "Pipeline activity"}
+                      </ChainOfThoughtHeader>
+                      <ChainOfThoughtContent>
+                        {steps.map((step) => (
+                          <ChainOfThoughtStep
+                            key={step.id}
+                            label={
+                              <span className="font-medium text-xs">
+                                {step.label}
+                              </span>
                             }
+                            description={step.description}
+                            status={step.status}
+                            icon={step.icon}
                           />
-                          {duration && <p className="text-xs text-muted-foreground">{duration}</p>}
-                          <ToolOutput
-                            output={
-                              event.output ??
-                              (event.status === "running" ? "Running…" : "No output")
-                            }
-                            errorText={undefined}
-                          />
-                        </ToolContent>
-                      </Tool>
-                    );
-                  })}
-                </div>
-              )}
-
-              {systemEvents && systemEvents.length > 0 && (
-                <div className="space-y-1.5 px-1">
-                  {systemEvents.map((ev) => (
-                    <SystemEventCard key={ev.id} event={ev} />
-                  ))}
-                </div>
-              )}
+                        ))}
+                      </ChainOfThoughtContent>
+                    </ChainOfThought>
+                  );
+                })()}
             </>
           )}
         </ConversationContent>
       </Conversation>
-
-      <AnimatePresence>
-        {isStreaming && (
-          <StatusBanner
-            phaseMessage={phaseMessage}
-            phaseProgress={phaseProgress}
-            retryTelemetry={retryTelemetry}
-          />
-        )}
-      </AnimatePresence>
 
       <div className="border-t border-border p-3">
         <PromptInput

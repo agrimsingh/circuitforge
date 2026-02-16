@@ -288,7 +288,6 @@ export function useAgentStream() {
       ...prev,
       messages: [...prev.messages, { id: nextMessageId(), role: "user", content: prompt }],
       thinkingText: "",
-      toolEvents: [],
       isStreaming: true,
       error: null,
       costUsd: null,
@@ -297,14 +296,12 @@ export function useAgentStream() {
       phaseProgress: 0,
       phaseMessage: "Phase entered",
       phaseSteps: createInitialPhaseSteps(nextPhase),
-      gateEvents: [],
       reviewDecisions: [],
       iterationDiffs: [],
       finalSummary: null,
       timingMetrics: [],
       repairPlans: [],
       repairResults: [],
-      systemEvents: [],
     }));
 
     try {

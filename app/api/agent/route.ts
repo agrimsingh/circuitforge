@@ -43,10 +43,6 @@ import type {
 export const runtime = "nodejs";
 export const maxDuration = 300;
 const MAX_REPAIR_ATTEMPTS = 3;
-const PER_ATTEMPT_TIMEOUT_MS = Math.max(
-  30_000,
-  Number.parseInt(process.env.CIRCUITFORGE_ATTEMPT_TIMEOUT_MS ?? "150000", 10) || 150_000,
-);
 const RETRY_STAGNATION_LIMIT = 3;
 const SIGNATURE_REPEAT_LIMIT = 2;
 const MIN_SCORE_IMPROVEMENT = 120;
@@ -1395,8 +1391,7 @@ export async function POST(req: Request) {
           for (let attempt = 1; attempt <= MAX_REPAIR_ATTEMPTS; attempt++) {
             attemptsUsed = attempt;
             if (requestSignal?.aborted) break;
-            const attemptTimeoutSignal = AbortSignal.timeout(PER_ATTEMPT_TIMEOUT_MS);
-            const attemptSignal = composeAbortSignal(requestSignal, attemptTimeoutSignal);
+            const attemptSignal = requestSignal;
             emit({ type: "retry_start", attempt, maxAttempts: MAX_REPAIR_ATTEMPTS });
             emit({
               type: "phase_progress",

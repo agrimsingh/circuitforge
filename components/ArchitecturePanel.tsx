@@ -130,11 +130,11 @@ export function ArchitecturePanel({ blocks }: ArchitecturePanelProps) {
   );
 
   return (
-    <div className="space-y-2">
+    <div className="h-full">
       {blocks.length === 0 ? (
         <p className="text-xs text-[#2a3a54]">No architecture blocks yet</p>
       ) : (
-        <div className="h-72 rounded-md border border-[#1a2236] bg-[#080c14]">
+        <div className="h-full rounded-md border border-[#1a2236] bg-[#080c14]">
           <Canvas
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
@@ -144,13 +144,6 @@ export function ArchitecturePanel({ blocks }: ArchitecturePanelProps) {
           />
         </div>
       )}
-
-      <details>
-        <summary className="cursor-pointer text-xs text-[#3a5070]">Mermaid fallback</summary>
-        <pre className="mt-2 max-h-48 overflow-x-auto overflow-y-auto rounded-md border border-[#1a2236] bg-[#060d16] p-2 text-[10px] text-[#6f88aa]">
-          {asMermaid(blocks)}
-        </pre>
-      </details>
     </div>
   );
 }

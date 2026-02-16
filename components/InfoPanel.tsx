@@ -7,22 +7,10 @@ import {
   ChainOfThoughtHeader,
   ChainOfThoughtStep,
 } from "@/components/ai-elements/chain-of-thought";
-import {
-  Confirmation,
-  ConfirmationAction,
-  ConfirmationActions,
-  ConfirmationRequest,
-} from "@/components/ai-elements/confirmation";
 import { Reasoning, ReasoningContent, ReasoningTrigger } from "@/components/ai-elements/reasoning";
 import { Tool, ToolContent, ToolHeader, ToolInput, ToolOutput } from "@/components/ai-elements/tool";
 import { Button } from "@/components/ui/button";
 import type { ToolEvent, RetryTelemetry } from "@/lib/stream/useAgentStream";
-import dynamic from "next/dynamic";
-
-const ArchitecturePanel = dynamic(
-  () => import("./ArchitecturePanel").then((m) => ({ default: m.ArchitecturePanel })),
-  { ssr: false }
-);
 import type {
   DesignPhase,
   RequirementItem,
@@ -181,10 +169,6 @@ export function InfoPanel({
     prevGateCountRef.current = passedCount;
   }, [gateEvents]);
 
-  const latestBlockedGate = gateEvents
-    ?.filter((event) => event.status === "blocked")
-    .slice()
-    .reverse()[0];
   const applyBulkDecision = (decision: "accept" | "dismiss") => {
     for (const finding of filteredFindings) {
       onReviewDecision(finding.id, decision);
@@ -199,25 +183,6 @@ export function InfoPanel({
 
   return (
     <div className="flex flex-col h-full bg-surface">
-      <div className="flex flex-col border-b border-border/40">
-        <div className="flex items-center justify-between px-4 py-2">
-          <span className="text-xs font-medium text-muted-foreground">Workflow</span>
-          <span className="text-xs text-muted-foreground">
-            {phaseMessage || `Current phase: ${phaseClass(phase)} (${phaseProgress}%)`}
-          </span>
-        </div>
-        {isStreaming && (
-          <div className="h-0.5 w-full bg-border/30">
-            <motion.div
-              className="h-full bg-accent/70 origin-left"
-              initial={{ scaleX: 0 }}
-              animate={{ scaleX: phaseProgress / 100 }}
-              transition={{ type: "spring", damping: 25, stiffness: 200 }}
-            />
-          </div>
-        )}
-      </div>
-
       <div className="flex-1 space-y-3 overflow-y-auto p-3 scrollbar-thin">
         <section className="relative space-y-2">
           <AnimatePresence>
@@ -248,90 +213,42 @@ export function InfoPanel({
           </ChainOfThought>
         </section>
 
-        {latestBlockedGate && (
-          <section className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
-            <Confirmation
-              state="approval-requested"
-              approval={{ id: latestBlockedGate.gate }}
-            >
-              <ConfirmationRequest>
-                <p className="text-sm font-medium text-amber-300">
-                  Decision needed: {latestBlockedGate.gate}
-                </p>
-                <p className="text-pretty mt-1 text-xs text-amber-200/90">
-                  {latestBlockedGate.reason ||
-                    latestBlockedGate.message ||
-                    "Proceeding blocked by gating condition."}
-                </p>
-              </ConfirmationRequest>
+        {(activityText || isStreaming || (retryTelemetry && retryTelemetry.attemptsSeen > 0)) && (
+          <section className="space-y-2">
+            <h4 className="text-xs font-medium text-muted-foreground flex items-center gap-2">
+              <span className="inline-block w-0.5 h-3 rounded-full bg-accent/30" />
+              Reasoning / Activity
+            </h4>
+            <Reasoning isStreaming={isStreaming} defaultOpen className="not-prose">
+              <ReasoningTrigger>Streaming activity log</ReasoningTrigger>
+              <ReasoningContent>
+                {activityText || "No activity emitted yet."}
+              </ReasoningContent>
+            </Reasoning>
 
-              {onSend && (
-                <ConfirmationActions className="mt-2">
-                  <ConfirmationAction
-                    variant="outline"
-                    onClick={() =>
-                      onSend(
-                        `Acknowledge gate ${latestBlockedGate.gate} and continue with the current design plan.`
-                      )
-                    }
-                  >
-                    Acknowledge
-                  </ConfirmationAction>
-                  <ConfirmationAction
-                    variant="outline"
-                    onClick={() =>
-                      onSend(`Retry the current run because ${latestBlockedGate.gate} was blocked.`)
-                    }
-                  >
-                    Retry
-                  </ConfirmationAction>
-                  <ConfirmationAction
-                    variant="outline"
-                    onClick={() =>
-                      onSend(`Proceed despite the gate block for ${latestBlockedGate.gate}.`)
-                    }
-                  >
-                    Proceed
-                  </ConfirmationAction>
-                </ConfirmationActions>
-              )}
-            </Confirmation>
+            {retryTelemetry && retryTelemetry.attemptsSeen > 0 && (
+              <div className="rounded-md border border-accent/10 bg-accent/2 p-2">
+                <h5 className="text-xs font-medium text-muted-foreground">Retry telemetry</h5>
+                <p className="mt-1 text-xs text-info">
+                  Attempts: {retryTelemetry.attemptsSeen}/{retryTelemetry.maxAttempts || "?"}
+                </p>
+                <p className="text-xs text-info">Final status: {retryTelemetry.finalStatus ?? "running"}</p>
+                <p className="text-xs text-info">Total diagnostics: {retryTelemetry.diagnosticsTotal}</p>
+                <p className="text-xs text-info">
+                  First error: {retryTelemetry.firstErrorCategory ?? "none"}
+                </p>
+              </div>
+            )}
           </section>
         )}
 
-        <section className="space-y-2">
-          <h4 className="text-xs font-medium text-muted-foreground flex items-center gap-2">
-            <span className="inline-block w-0.5 h-3 rounded-full bg-accent/30" />
-            Reasoning / Activity
-          </h4>
-          <Reasoning isStreaming={isStreaming} defaultOpen className="not-prose">
-            <ReasoningTrigger>Streaming activity log</ReasoningTrigger>
-            <ReasoningContent>
-              {activityText || "No activity emitted yet."}
-            </ReasoningContent>
-          </Reasoning>
-
-          {retryTelemetry && retryTelemetry.attemptsSeen > 0 && (
-            <div className="rounded-md border border-accent/10 bg-accent/2 p-2">
-              <h5 className="text-xs font-medium text-muted-foreground">Retry telemetry</h5>
-              <p className="mt-1 text-xs text-info">
-                Attempts: {retryTelemetry.attemptsSeen}/{retryTelemetry.maxAttempts || "?"}
-              </p>
-              <p className="text-xs text-info">Final status: {retryTelemetry.finalStatus ?? "running"}</p>
-              <p className="text-xs text-info">Total diagnostics: {retryTelemetry.diagnosticsTotal}</p>
-              <p className="text-xs text-info">
-                First error: {retryTelemetry.firstErrorCategory ?? "none"}
-              </p>
-            </div>
-          )}
-        </section>
-
-        <section className="space-y-2">
-          <h4 className="text-xs font-medium text-muted-foreground flex items-center gap-2">
-            <span className="inline-block w-0.5 h-3 rounded-full bg-accent/30" />
-            Output evidence
-          </h4>
-          {finalSummary ? (
+        {(finalSummary || latestDiff || latestTimings.length > 0 || latestRepairPlan || latestRepairResult) && (
+          <section className="space-y-2">
+            <h4 className="text-xs font-medium text-muted-foreground flex items-center gap-2">
+              <span className="inline-block w-0.5 h-3 rounded-full bg-accent/30" />
+              Output evidence
+            </h4>
+            {finalSummary ? (
             <div className="rounded-md border border-border p-2 text-xs">
               <p className="text-info">
                 Readiness: <span className="font-semibold"><AnimatedScore value={finalSummary.manufacturingReadinessScore} />/100</span>
@@ -353,9 +270,7 @@ export function InfoPanel({
                 </ul>
               )}
             </div>
-          ) : (
-            <p className="text-sm text-muted-foreground">No final evidence summary yet.</p>
-          )}
+          ) : null}
 
           {latestDiff && (
             <div className="rounded-md border border-border p-2 text-xs text-info">
@@ -415,16 +330,15 @@ export function InfoPanel({
               )}
             </div>
           )}
-        </section>
+          </section>
+        )}
 
-        <section className="space-y-2">
-          <h4 className="text-xs font-medium text-muted-foreground flex items-center gap-2">
-            <span className="inline-block w-0.5 h-3 rounded-full bg-accent/30" />
-            Tools
-          </h4>
-          {toolEvents.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No tool activity yet. Tools will appear here as the agent works.</p>
-          ) : (
+        {toolEvents.length > 0 && (
+          <section className="space-y-2">
+            <h4 className="text-xs font-medium text-muted-foreground flex items-center gap-2">
+              <span className="inline-block w-0.5 h-3 rounded-full bg-accent/30" />
+              Tools
+            </h4>
             <div className="space-y-2">
               {toolEvents.map((event) => (
                 <Tool key={event.id}>
@@ -444,17 +358,15 @@ export function InfoPanel({
                 </Tool>
               ))}
             </div>
-          )}
-        </section>
+          </section>
+        )}
 
-        <section className="space-y-2">
-          <h4 className="text-xs font-medium text-muted-foreground flex items-center gap-2">
-            <span className="inline-block w-0.5 h-3 rounded-full bg-accent/30" />
-            Requirements
-          </h4>
-          {requirements.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No requirements extracted yet. Start a conversation to generate requirements.</p>
-          ) : (
+        {requirements.length > 0 && (
+          <section className="space-y-2">
+            <h4 className="text-xs font-medium text-muted-foreground flex items-center gap-2">
+              <span className="inline-block w-0.5 h-3 rounded-full bg-accent/30" />
+              Requirements
+            </h4>
             <motion.ul
               className="space-y-2"
               initial="hidden"
@@ -476,25 +388,15 @@ export function InfoPanel({
                 </motion.li>
               ))}
             </motion.ul>
-          )}
-        </section>
+          </section>
+        )}
 
-        <section className="space-y-2">
-          <h4 className="text-xs font-medium text-muted-foreground flex items-center gap-2">
-            <span className="inline-block w-0.5 h-3 rounded-full bg-accent/30" />
-            Architecture
-          </h4>
-          <ArchitecturePanel blocks={architecture} />
-        </section>
-
-        <section className="space-y-2">
-          <h4 className="text-xs font-medium text-muted-foreground flex items-center gap-2">
-            <span className="inline-block w-0.5 h-3 rounded-full bg-accent/30" />
-            Review findings
-          </h4>
-          {openFindings.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No open findings. Review findings will appear after the review phase.</p>
-          ) : (
+        {openFindings.length > 0 && (
+          <section className="space-y-2">
+            <h4 className="text-xs font-medium text-muted-foreground flex items-center gap-2">
+              <span className="inline-block w-0.5 h-3 rounded-full bg-accent/30" />
+              Review findings
+            </h4>
             <>
               <div className="flex flex-wrap items-center gap-2">
                 {(["all", "critical", "warning", "info"] as const).map((option) => (
@@ -574,8 +476,8 @@ export function InfoPanel({
               </div>
               ))}
             </>
-          )}
-        </section>
+          </section>
+        )}
       </div>
     </div>
   );

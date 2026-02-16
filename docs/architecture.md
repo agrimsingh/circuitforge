@@ -175,11 +175,11 @@ Browser (Next.js)
 - Session context persistence with file-backed cache + TTL/LRU eviction: `lib/agent/sessionMemory.ts`.
 - Per-session single-flight orchestration in `/api/agent` (new request aborts prior run for same session).
 - Abort propagation from request through agent attempts and compile path.
-- Per-attempt timeout for retry loop, plus timeout-aware error emission.
+- Retry loop no longer uses a route-level per-attempt timer; attempts stop on request/session abort or upstream abort/timeout-like errors.
 - Retry stop policy tuned for meaningful improvement threshold and repeated-signature detection.
 - Compile and Convex memory calls now use bounded retry/backoff.
 - Convergence policy is blocker-first: implementation/review retries focus on blocking diagnostics, warnings become advisory, and gate pass can occur with advisory warnings present.
-- Timeout handling is non-terminal: timed out attempts emit `attempt_timeout` diagnostics and continue through retry loop instead of immediately failing the stream.
+- Abort/timeout-like failures are non-terminal: attempts emit `attempt_timeout` diagnostics and continue through retry loop instead of immediately failing the stream.
 - Abort-like SDK messages (for example, "aborted by user") are normalized into the same timeout-like retry flow.
 
 ## Conventions
