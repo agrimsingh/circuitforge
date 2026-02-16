@@ -11,6 +11,8 @@
     "test": "vitest run --exclude '__tests__/integration/**'",
     "test:integration": "vitest run __tests__/integration/ --testTimeout=180000 --exclude '__tests__/integration/agent-sdk*'",
     "test:sdk": "tsx __tests__/integration/agent-sdk.test.mts",
+    "test:agent:live": "tsx __tests__/integration/agent-route-live.mts",
+    "test:live:smoke": "tsx __tests__/integration/endpoint-live-smoke.mts",
     "test:all": "vitest run --exclude '__tests__/integration/agent-sdk*' --testTimeout=180000 && tsx __tests__/integration/agent-sdk.test.mts",
     "test:watch": "vitest",
     "convex:dev": "convex dev",

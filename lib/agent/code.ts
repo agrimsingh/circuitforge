@@ -1,4 +1,4 @@
-const CODE_BLOCK_RE = /```tsx\n([\s\S]*?)```/g;
+const CODE_BLOCK_RE = /```tsx\s*\r?\n([\s\S]*?)```/gi;
 
 export function extractCodeFromText(text: string): string | null {
   let lastMatch: string | null = null;
@@ -11,10 +11,8 @@ export function extractCodeFromText(text: string): string | null {
 }
 
 export function stripCodeBlocks(text: string): string {
-  let result = text.replace(CODE_BLOCK_RE, "\n[Circuit code generated — see Code tab]\n");
-  const openIdx = result.indexOf("```tsx\n");
-  if (openIdx !== -1) {
-    result = result.slice(0, openIdx) + "\n[Generating circuit code...]";
-  }
+  let result = text.replace(CODE_BLOCK_RE, "\n[Circuit code generated — see Circuit Preview]\n");
+  const openIdx = result.search(/```tsx\s*\r?\n/i);
+  if (openIdx !== -1) result = result.slice(0, openIdx) + "\n[Generating circuit code...]";
   return result.trim();
 }

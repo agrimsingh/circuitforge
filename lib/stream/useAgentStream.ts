@@ -12,6 +12,11 @@ import type {
   PhaseStepState,
   PhaseStepStatus,
   GateEvent,
+  IterationDiff,
+  FinalSummary,
+  TimingMetric,
+  RepairPlanEvent,
+  RepairResultEvent,
 } from "./types";
 import { extractCodeFromText, stripCodeBlocks } from "@/lib/agent/code";
 
@@ -29,6 +34,24 @@ export interface ToolEvent {
   output?: unknown;
   startedAt: number;
   finishedAt?: number;
+}
+
+export interface SystemEvent {
+  id: string;
+  type: "retry_start" | "validation_summary" | "retry_result" | "gate_passed" | "gate_blocked" | "repair_result";
+  at: number;
+  attempt?: number;
+  maxAttempts?: number;
+  status?: "clean" | "retrying" | "failed";
+  diagnosticsCount?: number;
+  diagnosticsByCategory?: Record<string, number>;
+  message?: string;
+  gate?: string;
+  phase?: string;
+  blockingBefore?: number;
+  blockingAfter?: number;
+  autoFixedCount?: number;
+  demotedCount?: number;
 }
 
 export interface RetryTelemetry {
@@ -62,6 +85,12 @@ export interface AgentStreamState {
   architecture: ArchitectureNode[];
   reviewFindings: ReviewFinding[];
   reviewDecisions: ReviewDecision[];
+  iterationDiffs: Array<{ attempt: number; diff: IterationDiff; at: number }>;
+  finalSummary: FinalSummary | null;
+  timingMetrics: Array<TimingMetric & { at: number }>;
+  repairPlans: Array<RepairPlanEvent & { at: number }>;
+  repairResults: Array<RepairResultEvent & { at: number }>;
+  systemEvents: SystemEvent[];
 }
 
 export interface SendPromptOptions {
@@ -207,6 +236,12 @@ const initialState: AgentStreamState = {
   architecture: [],
   reviewFindings: [],
   reviewDecisions: [],
+  iterationDiffs: [],
+  finalSummary: null,
+  timingMetrics: [],
+  repairPlans: [],
+  repairResults: [],
+  systemEvents: [],
 };
 
 export function useAgentStream() {
@@ -216,6 +251,8 @@ export function useAgentStream() {
   const activityLogRef = useRef("");
   const toolCounterRef = useRef(0);
   const messageCounterRef = useRef(0);
+  const receivedDoneRef = useRef(false);
+  const systemEventCounterRef = useRef(0);
   const lastStateRef = useRef(initialState);
 
   useEffect(() => {
@@ -244,6 +281,8 @@ export function useAgentStream() {
     accumulatedTextRef.current = "";
     activityLogRef.current = "";
     toolCounterRef.current = 0;
+    receivedDoneRef.current = false;
+    systemEventCounterRef.current = 0;
 
     setState((prev) => ({
       ...prev,
@@ -260,6 +299,12 @@ export function useAgentStream() {
       phaseSteps: createInitialPhaseSteps(nextPhase),
       gateEvents: [],
       reviewDecisions: [],
+      iterationDiffs: [],
+      finalSummary: null,
+      timingMetrics: [],
+      repairPlans: [],
+      repairResults: [],
+      systemEvents: [],
     }));
 
     try {
@@ -314,6 +359,17 @@ export function useAgentStream() {
           }
 
           switch (event.type) {
+            case "code": {
+              if (typeof event.content === "string" && event.content.trim()) {
+                appendActivity(`Updated circuit code (${event.file})`);
+                setState((prev) => ({
+                  ...prev,
+                  circuitCode: event.content,
+                }));
+              }
+              break;
+            }
+
             case "text": {
               accumulatedTextRef.current += event.content;
               const code = extractCodeFromText(accumulatedTextRef.current);
@@ -496,6 +552,7 @@ export function useAgentStream() {
                     at: Date.now(),
                   },
                 ],
+                systemEvents: [...prev.systemEvents, { id: `sys-${systemEventCounterRef.current++}`, type: "gate_passed" as const, at: Date.now(), gate: event.gate, phase: event.phase, message: event.message }],
               }));
               break;
             }
@@ -521,6 +578,7 @@ export function useAgentStream() {
                     at: Date.now(),
                   },
                 ],
+                systemEvents: [...prev.systemEvents, { id: `sys-${systemEventCounterRef.current++}`, type: "gate_blocked" as const, at: Date.now(), gate: event.gate, phase: event.phase, message: event.reason }],
               }));
               break;
             }
@@ -562,6 +620,84 @@ export function useAgentStream() {
               break;
             }
 
+            case "iteration_diff": {
+              appendActivity(`Δ Iteration ${event.attempt}: ${event.diff.summary}`);
+              setState((prev) => ({
+                ...prev,
+                iterationDiffs: [
+                  ...prev.iterationDiffs,
+                  {
+                    attempt: event.attempt,
+                    diff: event.diff,
+                    at: Date.now(),
+                  },
+                ],
+              }));
+              break;
+            }
+
+            case "final_summary": {
+              appendActivity(
+                `Final readiness: ${event.summary.manufacturingReadinessScore}/100 (open critical: ${event.summary.openCriticalFindings})`
+              );
+              setState((prev) => ({
+                ...prev,
+                finalSummary: event.summary,
+              }));
+              break;
+            }
+
+            case "timing_metric": {
+              setState((prev) => ({
+                ...prev,
+                timingMetrics: [
+                  ...prev.timingMetrics,
+                  {
+                    stage: event.stage,
+                    durationMs: event.durationMs,
+                    attempt: event.attempt,
+                    at: Date.now(),
+                  },
+                ].slice(-120),
+              }));
+              break;
+            }
+
+            case "repair_plan": {
+              appendActivity(
+                `Repair plan A${event.plan.attempt}: auto=${event.plan.autoFixableFamilies.length}, demote=${event.plan.shouldDemoteFamilies.length}, must=${event.plan.mustRepairFamilies.length}`
+              );
+              setState((prev) => ({
+                ...prev,
+                repairPlans: [
+                  ...prev.repairPlans,
+                  {
+                    ...event.plan,
+                    at: Date.now(),
+                  },
+                ].slice(-40),
+              }));
+              break;
+            }
+
+            case "repair_result": {
+              appendActivity(
+                `Repair result A${event.result.attempt}: blocking ${event.result.blockingBefore} -> ${event.result.blockingAfter}`
+              );
+              setState((prev) => ({
+                ...prev,
+                repairResults: [
+                  ...prev.repairResults,
+                  {
+                    ...event.result,
+                    at: Date.now(),
+                  },
+                ].slice(-40),
+                systemEvents: [...prev.systemEvents, { id: `sys-${systemEventCounterRef.current++}`, type: "repair_result" as const, at: Date.now(), attempt: event.result.attempt, blockingBefore: event.result.blockingBefore, blockingAfter: event.result.blockingAfter, autoFixedCount: event.result.autoFixedCount, demotedCount: event.result.demotedCount }],
+              }));
+              break;
+            }
+
             case "session_started": {
               setState((prev) => ({
                 ...prev,
@@ -581,6 +717,7 @@ export function useAgentStream() {
             }
 
             case "done": {
+              receivedDoneRef.current = true;
               setState((prev) => ({
                 ...prev,
                 isStreaming: false,
@@ -598,6 +735,7 @@ export function useAgentStream() {
                   maxAttempts: event.maxAttempts,
                   attemptsSeen: Math.max(prev.retryTelemetry?.attemptsSeen ?? 0, event.attempt),
                 },
+                systemEvents: [...prev.systemEvents, { id: `sys-${systemEventCounterRef.current++}`, type: "retry_start" as const, at: Date.now(), attempt: event.attempt, maxAttempts: event.maxAttempts }],
               }));
               break;
             }
@@ -613,6 +751,12 @@ export function useAgentStream() {
                     (diagnosticsByCategory[diagnostic.category] ?? 0) + 1;
                 }
 
+                const sysEventDiagByCategory: Record<string, number> = {};
+                for (const diagnostic of event.diagnostics) {
+                  sysEventDiagByCategory[diagnostic.category] =
+                    (sysEventDiagByCategory[diagnostic.category] ?? 0) + 1;
+                }
+
                 return {
                   ...prev,
                   retryTelemetry: {
@@ -624,6 +768,7 @@ export function useAgentStream() {
                       event.diagnostics[0]?.category ??
                       null,
                   },
+                  systemEvents: [...prev.systemEvents, { id: `sys-${systemEventCounterRef.current++}`, type: "validation_summary" as const, at: Date.now(), diagnosticsCount: event.diagnostics.length, diagnosticsByCategory: sysEventDiagByCategory }],
                 };
               });
               break;
@@ -641,6 +786,7 @@ export function useAgentStream() {
                   finalAttempt: event.attempt,
                   finalReason: event.reason ?? null,
                 },
+                systemEvents: [...prev.systemEvents, { id: `sys-${systemEventCounterRef.current++}`, type: "retry_result" as const, at: Date.now(), attempt: event.attempt, status: event.status, diagnosticsCount: event.diagnosticsCount, message: event.reason }],
               }));
               break;
             }
@@ -648,7 +794,15 @@ export function useAgentStream() {
         }
       }
 
-      setState((prev) => (prev.isStreaming ? { ...prev, isStreaming: false } : prev));
+      if (!receivedDoneRef.current) {
+        setState((prev) => ({
+          ...prev,
+          isStreaming: false,
+          error: "Connection lost — response may be incomplete.",
+        }));
+      } else {
+        setState((prev) => (prev.isStreaming ? { ...prev, isStreaming: false } : prev));
+      }
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
       setState((prev) => ({

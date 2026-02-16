@@ -38,6 +38,21 @@ describe("Export route — validation", () => {
     const res = await POST(makeRequest({ circuit_json: "not an array" }));
     expect(res.status).toBe(400);
   });
+
+  it("returns 409 when critical findings exist without risky override", async () => {
+    const res = await POST(
+      makeRequest({
+        circuit_json: simpleCircuit,
+        readiness: {
+          criticalFindingsCount: 2,
+          allowRiskyExport: false,
+        },
+      }),
+    );
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.error).toContain("critical findings");
+  });
 });
 
 describe("Export route — zip generation", () => {

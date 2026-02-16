@@ -6,7 +6,7 @@ Build a working demo of CircuitForge: prompt → agent reasoning → parts searc
 ## Current State
 - Full-stack MVP functional: prompt → agent → parts search → tscircuit code → live preview → export
 - 2/3-split UI: Conversation/chat, AI-native artifact preview, and workflow panel
-- 57 tests passing across unit, integration, and SDK tiers
+- Test coverage expanded across unit, integration, live SDK, and live endpoint smoke flows
 - Vercel Sandbox SDK integrated with smoke-test endpoint (`POST /api/sandbox/quickstart`)
 - Agent backend now runs a self-correction loop (compile validation + structured diagnostic retries + stagnation stop)
 - Preventive routing guardrails added for recurring trace/via DRC failures
@@ -16,6 +16,14 @@ Build a working demo of CircuitForge: prompt → agent reasoning → parts searc
 - V2 phase orchestration now emits phase checkpoints, architecture events, and review findings in `/api/agent`
 - Export route supports optional KiCad + review bundle outputs
 - Frontend now uses AI SDK Elements primitives for chat, reasoning, artifact, architecture graph, and tool surfaces
+- Parallelized compile/validation pipeline with speculative compilation, sandbox pooling, and concurrent KiCad analyses
+- SSE heartbeat keepalive + abort signal propagation for reliability
+- Error boundaries on all UI panels
+- SDK lifecycle race condition fixed (AbortController + explicit `close?.()`)
+- Deterministic diagnostic family router + repair evidence SSE events (`repair_plan`, `repair_result`) now integrated
+- `kicad_unconnected_pin` routing tightened to treat active functional pins as `must_repair`
+- Live smoke now supports fixture-selected deterministic prompt sets and a dedicated `PIN_CONFLICT_WARNING` probe
+- 15.4% latency reduction measured on live API test
 
 ## Plan of Work
 1. ~~Initialize Next.js with TypeScript, Tailwind, App Router~~
@@ -27,12 +35,12 @@ Build a working demo of CircuitForge: prompt → agent reasoning → parts searc
 7. ~~Polish UI with blueprint-noir aesthetic~~
 8. ~~Add minimal tests~~
 9. ~~Harden agent prompt engineering (layout, part search quality)~~
-10. Add CI pipeline (GitHub Actions)
+10. ~~Add CI pipeline (GitHub Actions)~~
 11. E2E browser tests (Playwright)
 12. Improve retry loop convergence rate for complex PCB violations
-13. Add five-phase workflow completion criteria and docs
-14. Hardening pass for KiCad round-trip validation
-15. Complete AI SDK Elements migration for chat/info/architecture/artifact surfaces
+13. ~~Add five-phase workflow completion criteria and docs~~
+14. ~~Hardening pass for KiCad round-trip validation~~
+15. ~~Complete AI SDK Elements migration for chat/info/architecture/artifact surfaces~~
 
 ## Milestones
 1. **Agent streams text** — Can send prompt, receive streaming SSE response
@@ -64,4 +72,5 @@ Build a working demo of CircuitForge: prompt → agent reasoning → parts searc
 - Part search can still be noisy for unfamiliar components (description-based search fallback)
 - Schematic/PCB layout quality depends heavily on prompt adherence
 - Retry loop can still fail closed when diagnostic signatures stagnate
-Spec coverage for five-phase workflow and KiCad integration is now in progress; export/review route-level integration tests still pending.
+- SDK ProcessTransport race mitigated but depends on upstream SDK fix for full resolution
+- Pin-conflict smoke probes can run close to timeout on slower local/dev environments.

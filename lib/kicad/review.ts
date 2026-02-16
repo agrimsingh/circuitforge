@@ -46,14 +46,49 @@ function normalizeSeverityFromCategory(category: string): number {
   return 5;
 }
 
+export function resolveDiagnosticFamily(category: string, message?: string): string {
+  const normalizedCategory = category.trim().toLowerCase();
+  const normalizedMessage = (message ?? "").trim().toLowerCase();
+  const combined = `${normalizedCategory} ${normalizedMessage}`;
+
+  if (combined.includes("kicad_unconnected_pin") || combined.includes("unconnected pin")) {
+    return "kicad_unconnected_pin";
+  }
+  if (combined.includes("floating_label") || combined.includes("floating label")) {
+    return "floating_label";
+  }
+  if (combined.includes("off_grid") || combined.includes("off-grid") || combined.includes("off grid")) {
+    return "off_grid";
+  }
+  if (combined.includes("kicad_bom_property") || combined.includes("bom")) {
+    return "kicad_bom_property";
+  }
+  if (
+    combined.includes("pin_conflict_warning") ||
+    combined.includes("pin conflict") ||
+    combined.includes("pin_conflict")
+  ) {
+    return "pin_conflict_warning";
+  }
+  if (combined.includes("duplicate_reference")) {
+    return "duplicate_reference";
+  }
+  if (combined.includes("compile_error") || combined.includes("compile")) {
+    return "compile_error";
+  }
+  return normalizedCategory || "validation";
+}
+
 function makeDiagnosticFromUnknown(raw: UnknownRecord): ValidationDiagnostic {
   const category = normalizeCategory(raw);
   const message = normalizeMessage(raw);
+  const family = resolveDiagnosticFamily(category, message);
   return {
     category,
     message,
     severity: typeof raw.severity === "number" ? raw.severity : normalizeSeverityFromCategory(category),
     signature: `${category}|${message.slice(0, 160)}`,
+    family,
   };
 }
 
@@ -87,10 +122,12 @@ function makeDiagnosticFromKicad(
   message: string,
   severity = 6,
 ): UnknownRecord {
+  const family = resolveDiagnosticFamily(category, message);
   return {
     category,
     message,
     severity,
+    family,
     ...(severity >= 8 ? { isBlocking: true } : {}),
   };
 }
@@ -106,6 +143,21 @@ function normalizeErcSeverity(raw: string): number {
     default:
       return 6;
   }
+}
+
+function adjustErcSeverityForKnownNonBlocking(
+  code: string,
+  message: string,
+  baseSeverity: number,
+): number {
+  const upperCode = code.toUpperCase();
+  if (upperCode !== "DUPLICATE_REFERENCE") return baseSeverity;
+
+  const normalizedMessage = message.toLowerCase();
+  const isPowerSymbolDuplicate =
+    /\b(gnd|vcc|vdd|vss|3v3|5v|\+3v3|\+5v)\b/.test(normalizedMessage);
+  if (isPowerSymbolDuplicate) return Math.min(baseSeverity, 4);
+  return Math.min(baseSeverity, 6);
 }
 
 function safePoint(point: unknown): string | null {
@@ -134,6 +186,7 @@ function normalizeKicadSchemaFindingsFromAnalyses(
         message,
         severity,
         signature: `${category}|${message.slice(0, 160)}`,
+        family: resolveDiagnosticFamily(category, message),
       };
     });
 }
@@ -154,6 +207,176 @@ function summarizeKicadNets(nets: UnknownRecord[]) {
   };
 }
 
+interface ConnectivityResult {
+  findings: UnknownRecord[];
+  metadata: UnknownRecord;
+}
+
+function runConnectivityAnalysis(
+  schematic: unknown,
+  kicadLib: Record<string, unknown>,
+): ConnectivityResult {
+  const findings: UnknownRecord[] = [];
+  const metadata: UnknownRecord = {};
+
+  const ConnectivityAnalyzer = kicadLib.ConnectivityAnalyzer as
+    | (new (schematic: unknown, symbolCache?: unknown) => {
+        analyzeNets: () => UnknownRecord[];
+        findUnconnectedPins: () => UnknownRecord[];
+      })
+    | undefined;
+
+  if (typeof ConnectivityAnalyzer !== "function") return { findings, metadata };
+
+  const analyzer = new ConnectivityAnalyzer(schematic);
+  const nets = analyzer.analyzeNets?.() ?? [];
+  const unconnectedPins = analyzer.findUnconnectedPins?.() ?? [];
+
+  const netSummaries = Array.isArray(nets) ? summarizeKicadNets(nets as UnknownRecord[]) : null;
+  metadata.connectivity_nets = netSummaries?.nets ?? 0;
+  metadata.connectivity_sample_nets = netSummaries?.sampledNets ?? [];
+
+  if (Array.isArray(unconnectedPins) && unconnectedPins.length > 0) {
+    for (const pin of unconnectedPins as UnknownRecord[]) {
+      const component = asString(pin.reference) ?? "unknown";
+      const pinName = asString(pin.pin) ?? "unknown";
+      const point = safePoint(pin.position);
+      findings.push(
+        makeDiagnosticFromKicad(
+          "kicad_unconnected_pin",
+          `${component} pin ${pinName} is unconnected${point ? ` at ${point}` : ""}`,
+          7,
+        ),
+      );
+    }
+    metadata.connectivity_unconnected_pins = unconnectedPins.length;
+  }
+
+  if (netSummaries) {
+    metadata.connectivity_samples = netSummaries.sampledNets;
+  }
+
+  return { findings, metadata };
+}
+
+interface ErcResult {
+  findings: UnknownRecord[];
+  metadata: UnknownRecord;
+}
+
+function runErcAnalysis(
+  schematic: unknown,
+  kicadLib: Record<string, unknown>,
+): ErcResult {
+  const findings: UnknownRecord[] = [];
+  const metadata: UnknownRecord = {};
+
+  const ElectricalRulesChecker = kicadLib.ElectricalRulesChecker as
+    | (new (schematic: unknown, config?: unknown, symbolCache?: unknown) => {
+        check: () => {
+          violations: UnknownRecord[];
+          passed: boolean;
+          errorCount?: number;
+          warningCount?: number;
+          infoCount?: number;
+        };
+      })
+    | undefined;
+
+  if (typeof ElectricalRulesChecker !== "function") return { findings, metadata };
+
+  const checker = new ElectricalRulesChecker(schematic);
+  const result = checker.check?.();
+  const violations = Array.isArray(result?.violations)
+    ? (result!.violations as UnknownRecord[])
+    : [];
+
+  metadata.erc_passed = result?.passed === true;
+  metadata.erc_error_count = result?.errorCount;
+  metadata.erc_warning_count = result?.warningCount;
+  metadata.erc_info_count = result?.infoCount;
+
+  for (const violation of violations) {
+    const message = asString(violation.message) ?? "Electrical rule violation";
+    const code = asString(violation.code) ?? "kicad_erc_violation";
+    const sev = asString(violation.severity) ?? "warning";
+    const location = asString((violation.location as Record<string, unknown> | null)?.element)
+      ? ` (${asString((violation.location as Record<string, unknown> | null)?.element)})`
+      : "";
+    const baseSeverity = normalizeErcSeverity(sev);
+    const severity = adjustErcSeverityForKnownNonBlocking(
+      code,
+      message,
+      baseSeverity,
+    );
+    findings.push(
+      makeDiagnosticFromKicad(
+        code,
+        `ERC ${code}: ${message}${location}`,
+        severity,
+      ),
+    );
+  }
+
+  return { findings, metadata };
+}
+
+interface BomResult {
+  findings: UnknownRecord[];
+  metadata: UnknownRecord;
+}
+
+async function runBomAudit(
+  kicadSchema: string,
+  kicadLib: Record<string, unknown>,
+): Promise<BomResult> {
+  const findings: UnknownRecord[] = [];
+  const metadata: UnknownRecord = {};
+
+  const BOMPropertyAuditor = kicadLib.BOMPropertyAuditor as
+    | (new () => {
+        auditSchematic: (
+          path: string,
+          requiredProperties: string[],
+          excludeDnp?: boolean,
+        ) => UnknownRecord[];
+      })
+    | undefined;
+
+  if (typeof BOMPropertyAuditor !== "function") return { findings, metadata };
+
+  const auditor = new BOMPropertyAuditor();
+  const tempDir = await mkdtemp(join(tmpdir(), "circuitforge-kicad-audit-"));
+  const tempFile = join(tempDir, "circuit.kicad_sch");
+  try {
+    await writeFile(tempFile, kicadSchema, "utf8");
+    const issues = auditor.auditSchematic?.(tempFile, BOM_REQUIRED_PROPERTIES, false) ?? [];
+    if (Array.isArray(issues)) {
+      for (const issue of issues as UnknownRecord[]) {
+        const reference = asString(issue.reference) ?? "unknown";
+        const missing = Array.isArray(issue.missingProperties)
+          ? issue.missingProperties
+              .map((value) => asString(value) ?? String(value))
+              .filter(Boolean)
+          : [];
+        if (missing.length === 0) continue;
+        findings.push(
+          makeDiagnosticFromKicad(
+            "kicad_bom_property",
+            `${reference} missing required BOM properties: ${missing.join(", ")}`,
+            6,
+          ),
+        );
+      }
+      metadata.bom_audit_issues = issues.length;
+    }
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+
+  return { findings, metadata };
+}
+
 async function runKicadSchemaValidations(
   kicadSchema: string,
 ): Promise<{
@@ -162,7 +385,6 @@ async function runKicadSchemaValidations(
   traceability: UnknownRecord | null;
   metadata: UnknownRecord;
 }> {
-  const findings: UnknownRecord[] = [];
   const metadata: UnknownRecord = {
     kicad_schema_validated: false,
     kicad_schema_length: kicadSchema.length,
@@ -183,172 +405,74 @@ async function runKicadSchemaValidations(
       throw new Error("kicad-sch-ts did not return a schematic object");
     }
 
-    const schematicForTraceability = {
-      title: asString((schematic as UnknownRecord).title) ?? "untitled",
-      uuid: asString((schematic as UnknownRecord).uuid) ?? "unknown",
-    };
-
     const schematicRecord = schematic as Record<string, unknown>;
-    metadata.kicad_schema_title = schematicForTraceability.title;
-    metadata.kicad_schema_uuid = schematicForTraceability.uuid;
+    metadata.kicad_schema_title = asString(schematicRecord.title) ?? "untitled";
+    metadata.kicad_schema_uuid = asString(schematicRecord.uuid) ?? "unknown";
     metadata.kicad_schema_component_count = Array.isArray(schematicRecord.components)
       ? schematicRecord.components.length
       : typeof (schematicRecord.components as { length?: unknown })?.length === "number"
         ? (schematicRecord.components as { length: number }).length
         : undefined;
 
-    const ConnectivityAnalyzer = kicadLib.ConnectivityAnalyzer as
-      | (new (schematic: unknown, symbolCache?: unknown) => {
-          analyzeNets: () => UnknownRecord[];
-          findUnconnectedPins: () => UnknownRecord[];
-        })
-      | undefined;
+    const [connectivityResult, ercResult, bomResult] = await Promise.all([
+      Promise.resolve(runConnectivityAnalysis(schematic, kicadLib)),
+      Promise.resolve(runErcAnalysis(schematic, kicadLib)),
+      runBomAudit(kicadSchema, kicadLib),
+    ]);
 
-    if (typeof ConnectivityAnalyzer === "function") {
-      const analyzer = new ConnectivityAnalyzer(schematic);
-      const nets = analyzer.analyzeNets?.() ?? [];
-      const unconnectedPins = analyzer.findUnconnectedPins?.() ?? [];
+    const findings = [
+      ...connectivityResult.findings,
+      ...ercResult.findings,
+      ...bomResult.findings,
+    ];
 
-      const netSummaries = Array.isArray(nets) ? summarizeKicadNets(nets as UnknownRecord[]) : null;
-      metadata.connectivity_nets = netSummaries?.nets ?? 0;
-      metadata.connectivity_sample_nets = netSummaries?.sampledNets ?? [];
-
-      if (Array.isArray(unconnectedPins) && unconnectedPins.length > 0) {
-        for (const pin of unconnectedPins as UnknownRecord[]) {
-          const component = asString(pin.reference) ?? "unknown";
-          const pinName = asString(pin.pin) ?? "unknown";
-          const point = safePoint(pin.position);
-          findings.push(
-            makeDiagnosticFromKicad(
-              "kicad_unconnected_pin",
-              `${component} pin ${pinName} is unconnected${point ? ` at ${point}` : ""}`,
-              7,
-            ),
-          );
-        }
-
-        metadata.connectivity_unconnected_pins = unconnectedPins.length;
-      }
-
-      if (netSummaries) {
-        metadata.connectivity_samples = netSummaries.sampledNets;
-      }
-    }
-
-    const ElectricalRulesChecker = kicadLib.ElectricalRulesChecker as
-      | (new (schematic: unknown, config?: unknown, symbolCache?: unknown) => {
-          check: () => {
-            violations: UnknownRecord[];
-            passed: boolean;
-            errorCount?: number;
-            warningCount?: number;
-            infoCount?: number;
-          };
-        })
-      | undefined;
-
-    if (typeof ElectricalRulesChecker === "function") {
-      const checker = new ElectricalRulesChecker(schematic);
-      const result = checker.check?.();
-      const violations = Array.isArray(result?.violations)
-        ? (result!.violations as UnknownRecord[])
-        : [];
-
-      metadata.erc_passed = result?.passed === true;
-      metadata.erc_error_count = result?.errorCount;
-      metadata.erc_warning_count = result?.warningCount;
-      metadata.erc_info_count = result?.infoCount;
-
-      for (const violation of violations) {
-        const message = asString(violation.message) ?? "Electrical rule violation";
-        const code = asString(violation.code) ?? "kicad_erc_violation";
-        const sev = asString(violation.severity) ?? "warning";
-        const location = asString((violation.location as Record<string, unknown> | null)?.element)
-          ? ` (${asString((violation.location as Record<string, unknown> | null)?.element)})`
-          : "";
-        findings.push(
-          makeDiagnosticFromKicad(
-            code,
-            `ERC ${code}: ${message}${location}`,
-            normalizeErcSeverity(sev),
-          ),
-        );
-      }
-    }
-
-    const BOMPropertyAuditor = kicadLib.BOMPropertyAuditor as
-      | (new () => {
-          auditSchematic: (
-            path: string,
-            requiredProperties: string[],
-            excludeDnp?: boolean,
-          ) => UnknownRecord[];
-        })
-      | undefined;
-
-    if (typeof BOMPropertyAuditor === "function") {
-      const auditor = new BOMPropertyAuditor();
-      const tempDir = await mkdtemp(join(tmpdir(), "circuitforge-kicad-audit-"));
-      const tempFile = join(tempDir, "circuit.kicad_sch");
-      try {
-        await writeFile(tempFile, kicadSchema, "utf8");
-        const issues = auditor.auditSchematic?.(tempFile, BOM_REQUIRED_PROPERTIES, false) ?? [];
-        if (Array.isArray(issues)) {
-          for (const issue of issues as UnknownRecord[]) {
-            const reference = asString(issue.reference) ?? "unknown";
-            const missing = Array.isArray(issue.missingProperties)
-              ? issue.missingProperties
-                  .map((value) => asString(value) ?? String(value))
-                  .filter(Boolean)
-              : [];
-            if (missing.length === 0) continue;
-            findings.push(
-              makeDiagnosticFromKicad(
-                "kicad_bom_property",
-                `${reference} missing required BOM properties: ${missing.join(", ")}`,
-                6,
-              ),
-            );
-          }
-          metadata.bom_audit_issues = issues.length;
-        }
-      } finally {
-        await rm(tempDir, { recursive: true, force: true });
-      }
-    }
-
+    Object.assign(metadata, connectivityResult.metadata, ercResult.metadata, bomResult.metadata);
     metadata.kicad_schema_validated = true;
+
+    return {
+      findings,
+      connectivity:
+        Object.prototype.hasOwnProperty.call(metadata, "connectivity_nets") ||
+        Object.prototype.hasOwnProperty.call(metadata, "connectivity_unconnected_pins")
+          ? {
+              nets: metadata.connectivity_nets ?? 0,
+              unconnectedPins: metadata.connectivity_unconnected_pins ?? 0,
+              sampledNets: metadata.connectivity_sample_nets ?? [],
+            }
+          : null,
+      traceability: {
+        schematic: {
+          title: metadata.kicad_schema_title,
+          uuid: metadata.kicad_schema_uuid,
+          components: metadata.kicad_schema_component_count,
+        },
+        kicadSchemaValidated: metadata.kicad_schema_validated,
+      },
+      metadata,
+    };
   } catch (error) {
-    findings.push(
+    const findings = [
       makeDiagnosticFromKicad(
         "kicad_schema_analysis_error",
         `Could not parse and validate kicad_sch: ${error instanceof Error ? error.message : String(error)}`,
         8,
       ),
-    );
-  }
+    ];
 
-  return {
-    findings,
-    connectivity:
-      Object.prototype.hasOwnProperty.call(metadata, "connectivity_nets") ||
-      Object.prototype.hasOwnProperty.call(metadata, "connectivity_unconnected_pins")
-        ? {
-            nets: metadata.connectivity_nets ?? 0,
-            unconnectedPins: metadata.connectivity_unconnected_pins ?? 0,
-            sampledNets: metadata.connectivity_sample_nets ?? [],
-          }
-        : null,
-    traceability: {
-      schematic: {
-        title: metadata.kicad_schema_title,
-        uuid: metadata.kicad_schema_uuid,
-        components: metadata.kicad_schema_component_count,
+    return {
+      findings,
+      connectivity: null,
+      traceability: {
+        schematic: {
+          title: metadata.kicad_schema_title,
+          uuid: metadata.kicad_schema_uuid,
+          components: metadata.kicad_schema_component_count,
+        },
+        kicadSchemaValidated: false,
       },
-      kicadSchemaValidated: metadata.kicad_schema_validated,
-    },
-    metadata,
-  };
+      metadata,
+    };
+  }
 }
 
 function summarizeConnectivity(circuitJson: unknown[]) {
@@ -400,7 +524,7 @@ function summarizeTraceability(circuitJson: unknown[]) {
 
 export function assessKicadFindingsFromRaw(rawFindings: unknown[]): ValidationDiagnostic[] {
   if (!Array.isArray(rawFindings)) return [];
-  return rawFindings
+  const normalized = rawFindings
     .filter((item): item is UnknownRecord => item !== null && typeof item === "object")
     .map((item) => makeDiagnosticFromUnknown(item))
     .concat(
@@ -409,8 +533,19 @@ export function assessKicadFindingsFromRaw(rawFindings: unknown[]): ValidationDi
         message: line,
         severity: 6,
         signature: `kicad_finding|${line.slice(0, 160)}`,
+        family: resolveDiagnosticFamily("kicad_finding", line),
       }))
     );
+
+  const deduped = new Map<string, ValidationDiagnostic>();
+  for (const diagnostic of normalized) {
+    const key = diagnostic.signature || `${diagnostic.category}|${diagnostic.message.slice(0, 160)}`;
+    const prior = deduped.get(key);
+    if (!prior || diagnostic.severity > prior.severity) {
+      deduped.set(key, diagnostic);
+    }
+  }
+  return Array.from(deduped.values());
 }
 
 export async function assessKicadFindings(circuitJson: unknown[]): Promise<KicadValidationResult> {

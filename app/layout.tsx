@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
-import { Space_Grotesk, JetBrains_Mono } from "next/font/google";
+import { DM_Sans, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 
-const display = Space_Grotesk({
+const display = DM_Sans({
   variable: "--font-display",
   subsets: ["latin"],
   weight: ["400", "500", "600", "700"],
@@ -17,6 +17,7 @@ const mono = JetBrains_Mono({
 export const metadata: Metadata = {
   title: "CircuitForge",
   description: "AI-powered conversational circuit designer. Natural language to manufacturable PCB.",
+  other: { "theme-color": "#000000" },
 };
 
 export default function RootLayout({

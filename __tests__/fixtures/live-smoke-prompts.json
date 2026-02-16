@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "sets": {
+    "default": {
+      "requirements": "I need a simple battery powered LED blink board with one status LED and one pushbutton.",
+      "implementation": "Design a tiny 5V to 3.3V regulator board using AMS1117-3.3 with input/output caps. Source AMS1117-3.3 from JLCPCB with search_parts and include LCSC in code comments.",
+      "pinConflict": "Design a dual-op-amp board where both op-amp outputs are tied to the same OUT net. Keep the shared output net explicit and include minimal resistor isolation."
+    },
+    "conflictHeavy": {
+      "requirements": "I need a simple battery powered LED blink board with one status LED and one pushbutton.",
+      "implementation": "Build a compact regulator design around AMS1117-3.3, include two output rails sharing constrained routing channels, and source the regulator through search_parts with LCSC identifiers in comments.",
+      "pinConflict": "Create a dual-op-amp implementation where both output pins are intentionally connected onto one OUT net before repair, while preserving explicit feedback paths."
+    }
+  }
+}

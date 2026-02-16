@@ -20,6 +20,11 @@ interface ExportFormatSet {
 interface ExportRequestBody {
   circuit_json: unknown[];
   formatSet?: ExportFormatSet;
+  readiness?: {
+    criticalFindingsCount?: number;
+    allowRiskyExport?: boolean;
+    readinessScore?: number | null;
+  };
 }
 
 export async function POST(req: Request) {
@@ -44,6 +49,22 @@ export async function POST(req: Request) {
 
   const soup = body.circuit_json;
   const formatSet = body.formatSet ?? {};
+  const criticalFindingsCount = Number.isFinite(body.readiness?.criticalFindingsCount)
+    ? Math.max(0, Number(body.readiness?.criticalFindingsCount))
+    : 0;
+  const allowRiskyExport = body.readiness?.allowRiskyExport === true;
+
+  if (criticalFindingsCount > 0 && !allowRiskyExport) {
+    return new Response(
+      JSON.stringify({
+        error: "Export blocked by unresolved critical findings",
+        details:
+          "Resolve critical review findings first, or explicitly request a risky export override.",
+        criticalFindingsCount,
+      }),
+      { status: 409, headers: { "Content-Type": "application/json" } },
+    );
+  }
 
   try {
     const zip = new JSZip();

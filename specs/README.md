@@ -9,6 +9,7 @@
 | [five-phase-workflow](./five-phase-workflow.md) | In Progress | Partial (2026-02-13) | Phase contracts, visible phase timeline, checkpoints, and review decisions |
 | [kicad-integration](./kicad-integration.md) | In Progress | Partial (2026-02-13) | `circuit-json-to-kicad` + `kicad-sch-ts` conversion, review, and MCP-style edit route |
 | [testing-strategy](./testing-strategy.md) | Implemented | Yes (2026-02-13) | Testing approach — 3-tier pyramid with live SDK tests |
+| [dynamic-repair-live-endpoint](./dynamic-repair-live-endpoint.md) | Implemented | Yes (2026-02-16) | Deterministic diagnostic routing, repair evidence SSE, and live endpoint verification contracts |
 
 ## Status Legend
 - **Draft**: Initial spec written, not yet implemented

@@ -97,6 +97,20 @@ Without these vars, the app automatically falls back to in-memory error memory.
 - `pnpm convex:dev` - Convex dev deployment/watch
 - `pnpm convex:deploy` - deploy Convex functions
 - `pnpm test:sdk` - run SDK smoke test (optional, requires SDK creds)
+- `pnpm test:agent:live` - run live `/api/agent` SSE test with real key
+- `pnpm test:live:smoke` - hit live local endpoints (`/api/agent`, KiCad, export) end-to-end
+
+### Live Smoke Controls
+
+`pnpm test:live:smoke` supports deterministic prompt fixtures and probe toggles:
+
+- `CIRCUITFORGE_BASE_URL` (default `http://localhost:3000`)
+- `CIRCUITFORGE_AGENT_TIMEOUT_MS` (default `360000`)
+- `CIRCUITFORGE_SMOKE_IMPLEMENTATION=0` to skip implementation probe
+- `CIRCUITFORGE_SMOKE_PIN_CONFLICT=0` to skip pin-conflict probe
+- `CIRCUITFORGE_SMOKE_PROMPT_SET=<set-id>` to select a prompt set from `__tests__/fixtures/live-smoke-prompts.json`
+
+The smoke run now fails fast if the selected prompt set is missing or invalid.
 
 ## Project Docs
 

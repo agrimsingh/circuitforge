@@ -72,12 +72,58 @@ export interface ReviewDecision {
   reason?: string;
 }
 
+export interface IterationDiff {
+  addedComponents: string[];
+  removedComponents: string[];
+  changedComponentValues: Array<{ name: string; from: string; to: string }>;
+  traceCountDelta: number;
+  summary: string;
+}
+
+export interface FinalSummary {
+  designIntent: string;
+  constraintsSatisfied: string[];
+  unresolvedBlockers: string[];
+  manufacturingReadinessScore: number;
+  diagnosticsCount: number;
+  blockingDiagnosticsCount: number;
+  warningDiagnosticsCount: number;
+  openCriticalFindings: number;
+  attemptsUsed: number;
+  phase: DesignPhase;
+}
+
+export interface TimingMetric {
+  stage: string;
+  durationMs: number;
+  attempt?: number;
+}
+
 export interface ValidationDiagnostic {
   category: string;
   message: string;
   signature: string;
   severity: number;
   source?: "tscircuit" | "kicad";
+  family?: string;
+  handling?: "auto_fixable" | "should_demote" | "must_repair";
+}
+
+export interface RepairPlanEvent {
+  attempt: number;
+  autoFixableFamilies: string[];
+  shouldDemoteFamilies: string[];
+  mustRepairFamilies: string[];
+}
+
+export interface RepairResultEvent {
+  attempt: number;
+  blockingBefore: number;
+  blockingAfter: number;
+  demotedCount: number;
+  autoFixedCount: number;
+  revalidated: boolean;
+  appliedActions: string[];
 }
 
 export type SSEEvent =
@@ -90,6 +136,8 @@ export type SSEEvent =
   | { type: "subagent_stop"; agent: string }
   | { type: "retry_start"; attempt: number; maxAttempts: number }
   | { type: "validation_errors"; attempt: number; diagnostics: ValidationDiagnostic[] }
+  | { type: "repair_plan"; plan: RepairPlanEvent }
+  | { type: "repair_result"; result: RepairResultEvent }
   | {
       type: "retry_result";
       attempt: number;
@@ -131,7 +179,11 @@ export type SSEEvent =
   | { type: "requirements_item"; item: RequirementItem }
   | { type: "architecture_block"; block: ArchitectureNode }
   | { type: "review_finding"; finding: ReviewFinding }
-  | { type: "review_decision"; decision: ReviewDecision };
+  | { type: "review_decision"; decision: ReviewDecision }
+  | { type: "iteration_diff"; attempt: number; diff: IterationDiff }
+  | { type: "final_summary"; summary: FinalSummary }
+  | { type: "timing_metric"; stage: string; durationMs: number; attempt?: number }
+  | { type: "ping" };
 
 export interface AgentRequest {
   prompt: string;

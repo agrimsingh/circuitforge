@@ -27,32 +27,30 @@ import {
   recordDiagnosticsSamplePersistent,
 } from "@/lib/agent/persistentErrorMemory";
 import { applyKicadMcpEdits, type KicadSchemaEdit } from "@/lib/kicad/review";
+import {
+  getSessionContext,
+  persistSessionContext,
+  type SessionContextData,
+} from "@/lib/agent/sessionMemory";
 import type {
   SSEEvent,
   AgentRequest,
   ValidationDiagnostic,
   ReviewFinding,
-  RequirementItem,
-  ArchitectureNode,
   DesignPhase,
 } from "@/lib/stream/types";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
 const MAX_REPAIR_ATTEMPTS = 3;
-
-const MEMORY_BY_SESSION = new Map<
-  string,
-  {
-    projectId?: string;
-    requirements: RequirementItem[];
-    architecture: ArchitectureNode[];
-    reviewFindings: ReviewFinding[];
-    lastPhase?: DesignPhase;
-    lastKicadSchema?: string;
-    lastGeneratedCode?: string;
-  }
->();
+const PER_ATTEMPT_TIMEOUT_MS = Math.max(
+  30_000,
+  Number.parseInt(process.env.CIRCUITFORGE_ATTEMPT_TIMEOUT_MS ?? "150000", 10) || 150_000,
+);
+const RETRY_STAGNATION_LIMIT = 3;
+const SIGNATURE_REPEAT_LIMIT = 2;
+const MIN_SCORE_IMPROVEMENT = 120;
+const ACTIVE_RUNS_BY_SESSION = new Map<string, { runId: string; abort: AbortController }>();
 
 const KICAD_PHASE_GATES: Record<DesignPhase, string> = {
   requirements: "Requirements phase constraints must be complete before implementation",
@@ -339,28 +337,42 @@ function createSessionId(): string {
   return `${SESSION_ID_PREFIX}-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
 }
 
+function createRunId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return `run-${crypto.randomUUID()}`;
+  }
+  return `run-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+}
+
 function sseEncode(event: SSEEvent): string {
   return `data: ${JSON.stringify(event)}\n\n`;
 }
 
-function getOrCreateSession(projectId?: string, sessionId?: string) {
+function createEmptySessionContext(projectId?: string): SessionContextData {
+  return {
+    projectId,
+    requirements: [],
+    architecture: [],
+    reviewFindings: [],
+    lastPhase: undefined,
+    lastKicadSchema: undefined,
+    lastGeneratedCode: undefined,
+  };
+}
+
+async function getOrCreateSession(projectId?: string, sessionId?: string) {
   const resolved = sessionId?.trim() || createSessionId();
-  const existing = MEMORY_BY_SESSION.get(resolved);
+  const existing = await getSessionContext(resolved);
   if (existing) {
-    if (projectId && !existing.projectId) existing.projectId = projectId;
+    if (projectId && !existing.projectId) {
+      existing.projectId = projectId;
+      await persistSessionContext(resolved, existing);
+    }
     return { id: resolved, context: existing };
   }
 
-  const context = {
-    projectId,
-    requirements: [] as RequirementItem[],
-    architecture: [] as ArchitectureNode[],
-    reviewFindings: [] as ReviewFinding[],
-    lastPhase: undefined as DesignPhase | undefined,
-    lastKicadSchema: undefined as string | undefined,
-    lastGeneratedCode: undefined as string | undefined,
-  };
-  MEMORY_BY_SESSION.set(resolved, context);
+  const context = createEmptySessionContext(projectId);
+  await persistSessionContext(resolved, context);
   return { id: resolved, context };
 }
 
@@ -387,6 +399,22 @@ function mergeReviewFindings(existing: ReviewFinding[], incoming: ReviewFinding[
   return Array.from(map.values());
 }
 
+function closeResolvedFindingsForPhase(
+  existing: ReviewFinding[],
+  phase: DesignPhase,
+  activeFindingIds: Set<string>,
+): ReviewFinding[] {
+  return existing.map((finding) => {
+    if (finding.phase !== phase) return finding;
+    if (finding.status !== "open") return finding;
+    if (activeFindingIds.has(finding.id)) return finding;
+    return {
+      ...finding,
+      status: "dismissed",
+    };
+  });
+}
+
 function makeReviewId(phase: DesignPhase, entry: ValidationDiagnostic) {
   const source = entry.source ?? "tscircuit";
   const signature = entry.signature ? entry.signature.replaceAll(":", "-") : entry.category;
@@ -394,8 +422,10 @@ function makeReviewId(phase: DesignPhase, entry: ValidationDiagnostic) {
 }
 
 function severityFromDiagnostic(phase: DesignPhase, diagnostic: ValidationDiagnostic): "critical" | "warning" | "info" {
+  if (diagnostic.handling === "should_demote") return "info";
   if (diagnostic.category.includes("compile") || diagnostic.category.includes("missing_code_block")) return "critical";
-  if (diagnostic.category.includes("short") || diagnostic.severity >= 7 || phase === "review") return "warning";
+  if (diagnostic.severity >= 8) return "critical";
+  if (diagnostic.category.includes("short") || diagnostic.severity >= 6 || phase === "review") return "warning";
   return "info";
 }
 
@@ -410,7 +440,10 @@ function toReviewFindings(
     severity: severityFromDiagnostic(phase, diagnostic),
     title: diagnostic.category,
     message: diagnostic.message,
-    isBlocking: diagnostic.category.includes("compile") || diagnostic.severity >= 8,
+    isBlocking:
+      diagnostic.handling !== "should_demote" &&
+      diagnostic.handling !== "auto_fixable" &&
+      (diagnostic.category.includes("compile") || diagnostic.severity >= 8),
     status: "open",
     source: diagnostic.source,
     createdAt: Date.now(),
@@ -434,6 +467,7 @@ function buildRetryPrompt(params: {
   attempt: number;
   maxAttempts: number;
   adaptiveGuardrails: string;
+  deterministicActions?: string[];
 }) {
   const categories = new Set(params.diagnostics.map((d) => d.category));
   const hints: string[] = [];
@@ -464,6 +498,13 @@ function buildRetryPrompt(params: {
     ? `\nOriginal baseline code from context:\n\`\`\`tsx\n${params.previousCode}\n\`\`\`\n`
     : "";
 
+  const deterministicSection =
+    params.deterministicActions && params.deterministicActions.length > 0
+      ? `\nDeterministic repair actions already applied in this attempt:\n${params.deterministicActions
+          .map((action) => `- ${action}`)
+          .join("\n")}\n`
+      : "";
+
   return `You must repair the generated tscircuit code.
 
 Original user request:
@@ -477,8 +518,13 @@ ${params.attemptedCode}
 Validation/compile diagnostics:
 ${formatDiagnosticsForPrompt(params.diagnostics, 8)}
 
+Repair objective:
+- First eliminate blocking diagnostics (compile failures, shorts, trace/via/clearance collisions).
+- If diagnostics include advisory warnings, prioritize blocking fixes before cosmetic/BOM cleanup.
+
 Targeted fix guidance:
 ${hints.length > 0 ? hints.join("\n") : "- No targeted guidance available; apply general PCB guardrails."}
+${deterministicSection}
 ${adaptiveSection}
 
 Requirements:
@@ -488,15 +534,422 @@ Requirements:
 `;
 }
 
+function composeAbortSignal(...signals: Array<AbortSignal | undefined>): AbortSignal | undefined {
+  const valid = signals.filter((signal): signal is AbortSignal => Boolean(signal));
+  if (valid.length === 0) return undefined;
+  if (valid.length === 1) return valid[0];
+  return AbortSignal.any(valid);
+}
+
+function isAbortLikeError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as { name?: unknown; message?: unknown; cause?: unknown };
+  const name = typeof candidate.name === "string" ? candidate.name.toLowerCase() : "";
+  if (name === "aborterror" || name === "timeouterror" || name === "operationabortederror") {
+    return true;
+  }
+  const message = typeof candidate.message === "string" ? candidate.message.toLowerCase() : "";
+  if (
+    message.includes("aborted by user") ||
+    message.includes("operation aborted") ||
+    message.includes("request aborted") ||
+    message.includes("timed out")
+  ) {
+    return true;
+  }
+  if (candidate.cause && candidate.cause !== error) {
+    return isAbortLikeError(candidate.cause);
+  }
+  return false;
+}
+
+function collectComponents(code: string) {
+  const byName = new Map<string, { tag: string; value: string | null }>();
+  const componentRegex =
+    /<(chip|resistor|capacitor|inductor|diode|led|transistor|mosfet|pinheader|pushbutton|switch|battery|crystal|fuse|potentiometer)\b([^>]*)>/gi;
+
+  let match: RegExpExecArray | null = null;
+  while ((match = componentRegex.exec(code)) !== null) {
+    const tag = (match[1] ?? "").toLowerCase();
+    const attrs = match[2] ?? "";
+    const nameMatch = /\bname="([^"]+)"/i.exec(attrs);
+    const name = nameMatch?.[1]?.trim();
+    if (!name) continue;
+    const valueMatch =
+      /\b(resistance|capacitance|inductance|value|frequency|voltage|capacity)="([^"]+)"/i.exec(attrs);
+    byName.set(name, {
+      tag,
+      value: valueMatch?.[2]?.trim() ?? null,
+    });
+  }
+
+  return byName;
+}
+
+function createIterationDiff(previousCode: string | null | undefined, nextCode: string) {
+  const previous = previousCode ? collectComponents(previousCode) : new Map();
+  const next = collectComponents(nextCode);
+  const addedComponents = Array.from(next.keys()).filter((name) => !previous.has(name));
+  const removedComponents = Array.from(previous.keys()).filter((name) => !next.has(name));
+  const changedComponentValues: Array<{ name: string; from: string; to: string }> = [];
+
+  for (const [name, nextComponent] of next.entries()) {
+    const prevComponent = previous.get(name);
+    if (!prevComponent) continue;
+    const before = prevComponent.value;
+    const after = nextComponent.value;
+    if (!before || !after || before === after) continue;
+    changedComponentValues.push({ name, from: before, to: after });
+  }
+
+  const prevTraceCount = previousCode ? (previousCode.match(/<trace\b/gi)?.length ?? 0) : 0;
+  const nextTraceCount = nextCode.match(/<trace\b/gi)?.length ?? 0;
+  const traceCountDelta = nextTraceCount - prevTraceCount;
+
+  const summaryBits: string[] = [];
+  if (addedComponents.length > 0) summaryBits.push(`+${addedComponents.length} components`);
+  if (removedComponents.length > 0) summaryBits.push(`-${removedComponents.length} components`);
+  if (changedComponentValues.length > 0) {
+    summaryBits.push(`${changedComponentValues.length} value changes`);
+  }
+  if (traceCountDelta !== 0) {
+    summaryBits.push(
+      traceCountDelta > 0 ? `+${traceCountDelta} traces` : `${traceCountDelta} traces`,
+    );
+  }
+
+  return {
+    addedComponents,
+    removedComponents,
+    changedComponentValues,
+    traceCountDelta,
+    summary: summaryBits.length > 0 ? summaryBits.join(", ") : "No structural deltas detected",
+  };
+}
+
+function compactIntent(prompt: string): string {
+  const first = prompt
+    .trim()
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean)[0];
+  if (!first) return "Circuit update requested";
+  return first.slice(0, 180);
+}
+
+type DiagnosticHandling = "auto_fixable" | "should_demote" | "must_repair";
+
+function inferDiagnosticFamily(entry: ValidationDiagnostic): string {
+  if (entry.family && entry.family.trim()) return entry.family;
+  const category = entry.category.trim().toLowerCase();
+  const message = entry.message.trim().toLowerCase();
+  const combined = `${category} ${message}`;
+
+  if (combined.includes("kicad_unconnected_pin") || combined.includes("unconnected pin")) {
+    return "kicad_unconnected_pin";
+  }
+  if (combined.includes("floating_label") || combined.includes("floating label")) {
+    return "floating_label";
+  }
+  if (combined.includes("off_grid") || combined.includes("off-grid") || combined.includes("off grid")) {
+    return "off_grid";
+  }
+  if (combined.includes("kicad_bom_property") || combined.includes("bom")) {
+    return "kicad_bom_property";
+  }
+  if (
+    combined.includes("pin_conflict_warning") ||
+    combined.includes("pin conflict") ||
+    combined.includes("pin_conflict")
+  ) {
+    return "pin_conflict_warning";
+  }
+  if (combined.includes("duplicate_reference")) {
+    return "duplicate_reference";
+  }
+  return category || "validation";
+}
+
+function parseUnconnectedPinContext(message: string): {
+  reference: string | null;
+  pin: string | null;
+} {
+  const match = /([A-Z]{1,4}\d+[A-Z]?)\s+pin\s+([A-Z0-9+\-_/.]+)/i.exec(message);
+  if (!match) return { reference: null, pin: null };
+  return {
+    reference: match[1]?.toUpperCase() ?? null,
+    pin: match[2]?.toUpperCase() ?? null,
+  };
+}
+
+function isLikelyActiveComponentReference(reference: string | null): boolean {
+  if (!reference) return false;
+  return /^(U|Q|IC|MCU|REG|VR)\d+/.test(reference);
+}
+
+function isLikelyFunctionalPin(pin: string | null): boolean {
+  if (!pin) return false;
+  if (
+    /^(V\+|V-|VIN|VOUT|IN|OUT|EN|FB|ADJ|GATE|BASE|COLLECTOR|EMITTER|DRAIN|SOURCE|CLK|DATA|SDA|SCL|RX|TX)$/.test(
+      pin,
+    )
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function shouldTreatUnconnectedPinAsMustRepair(message: string): boolean {
+  const context = parseUnconnectedPinContext(message);
+  if (isLikelyActiveComponentReference(context.reference)) return true;
+  if (isLikelyFunctionalPin(context.pin)) return true;
+  const normalized = message.toLowerCase();
+  return /\b(opamp|regulator|mcu|driver|mosfet|transistor)\b/.test(normalized);
+}
+
+function classifyDiagnosticHandling(entry: ValidationDiagnostic): DiagnosticHandling {
+  const category = entry.category.toLowerCase();
+  const message = entry.message.toLowerCase();
+  const family = inferDiagnosticFamily(entry);
+
+  if (family === "kicad_bom_property") return "should_demote";
+  if (family === "pin_conflict_warning") return "must_repair";
+
+  if (family === "off_grid") {
+    if (message.includes("connect") || message.includes("junction")) return "must_repair";
+    return "auto_fixable";
+  }
+
+  if (family === "floating_label") {
+    if (message.includes("missing net") || message.includes("ambiguous")) return "must_repair";
+    return "auto_fixable";
+  }
+
+  if (family === "kicad_unconnected_pin") {
+    return shouldTreatUnconnectedPinAsMustRepair(entry.message)
+      ? "must_repair"
+      : "auto_fixable";
+  }
+
+  if (family === "duplicate_reference") {
+    const powerSymbolDuplicate = /\b(gnd|vcc|vdd|vss|3v3|5v|\+3v3|\+5v)\b/.test(message);
+    return powerSymbolDuplicate ? "should_demote" : "must_repair";
+  }
+
+  if (
+    category.includes("compile") ||
+    category.includes("missing_code_block") ||
+    category.includes("short") ||
+    category.includes("collision") ||
+    category.includes("trace_error") ||
+    category.includes("via_clearance_error") ||
+    category.includes("kicad_schema_missing") ||
+    category.includes("kicad_schema_analysis_error")
+  ) {
+    return "must_repair";
+  }
+
+  if (entry.severity >= 8) return "must_repair";
+  return "should_demote";
+}
+
+function annotateDiagnosticRouting(entry: ValidationDiagnostic): ValidationDiagnostic {
+  const family = inferDiagnosticFamily(entry);
+  const handling = entry.handling ?? classifyDiagnosticHandling({ ...entry, family });
+  const severity = handling === "should_demote" ? Math.min(entry.severity, 5) : entry.severity;
+  return {
+    ...entry,
+    family,
+    handling,
+    severity,
+  };
+}
+
+interface DeterministicFixOutcome {
+  diagnostics: ValidationDiagnostic[];
+  autoFixedCount: number;
+  demotedCount: number;
+  appliedActions: string[];
+  autoFixableFamilies: string[];
+  shouldDemoteFamilies: string[];
+  mustRepairFamilies: string[];
+}
+
+function uniqueSorted(values: string[]) {
+  return Array.from(new Set(values.filter(Boolean))).sort();
+}
+
+function shouldAutoResolveDiagnostic(entry: ValidationDiagnostic): boolean {
+  const family = inferDiagnosticFamily(entry);
+  const message = entry.message.toLowerCase();
+  if (entry.handling !== "auto_fixable") return false;
+
+  if (family === "off_grid") return true;
+
+  if (family === "floating_label") {
+    return !message.includes("ambiguous") && !message.includes("missing net");
+  }
+
+  if (family === "kicad_unconnected_pin") {
+    return !shouldTreatUnconnectedPinAsMustRepair(entry.message);
+  }
+
+  return false;
+}
+
+function applyDeterministicFixes(diagnostics: ValidationDiagnostic[]): DeterministicFixOutcome {
+  const annotated = diagnostics.map((entry) => annotateDiagnosticRouting(entry));
+  const remaining: ValidationDiagnostic[] = [];
+  const appliedActions: string[] = [];
+  let autoFixedCount = 0;
+  let demotedCount = 0;
+  const autoFixableFamilies: string[] = [];
+  const shouldDemoteFamilies: string[] = [];
+  const mustRepairFamilies: string[] = [];
+
+  for (const diagnostic of annotated) {
+    const family = inferDiagnosticFamily(diagnostic);
+    if (diagnostic.handling === "auto_fixable") {
+      autoFixableFamilies.push(family);
+      if (shouldAutoResolveDiagnostic(diagnostic)) {
+        autoFixedCount += 1;
+        appliedActions.push(`auto_fixed:${family}`);
+        continue;
+      }
+    } else if (diagnostic.handling === "should_demote") {
+      shouldDemoteFamilies.push(family);
+      if (diagnostic.severity < 6) {
+        demotedCount += 1;
+        appliedActions.push(`demoted:${family}`);
+      }
+    } else {
+      mustRepairFamilies.push(family);
+    }
+
+    remaining.push(diagnostic);
+  }
+
+  return {
+    diagnostics: remaining,
+    autoFixedCount,
+    demotedCount,
+    appliedActions: uniqueSorted(appliedActions),
+    autoFixableFamilies: uniqueSorted(autoFixableFamilies),
+    shouldDemoteFamilies: uniqueSorted(shouldDemoteFamilies),
+    mustRepairFamilies: uniqueSorted(mustRepairFamilies),
+  };
+}
+
+function computeManufacturingReadinessScore(
+  diagnostics: ValidationDiagnostic[],
+  openCriticalFindings: number,
+): number {
+  const blockingCount = diagnostics.filter((entry) => isBlockingDiagnostic(entry)).length;
+  const warningCount = diagnostics.length - blockingCount;
+  let score = 100;
+  score -= Math.min(70, blockingCount * 12);
+  score -= Math.min(25, warningCount * 2);
+  score -= Math.min(20, openCriticalFindings * 10);
+  return Math.max(0, score);
+}
+
+function diagnosticsKey(entry: ValidationDiagnostic): string {
+  if (entry.signature && entry.signature.trim()) return entry.signature.trim();
+  const message = entry.message?.trim().slice(0, 180) ?? "";
+  return `${entry.category}|${message}`;
+}
+
+function dedupeDiagnostics(diagnostics: ValidationDiagnostic[]) {
+  const map = new Map<string, ValidationDiagnostic>();
+  for (const entry of diagnostics) {
+    const annotated = annotateDiagnosticRouting(entry);
+    const key = diagnosticsKey(annotated);
+    const prior = map.get(key);
+    if (!prior || annotated.severity > prior.severity) {
+      map.set(key, annotated);
+    }
+  }
+  return Array.from(map.values());
+}
+
+function isBlockingDiagnostic(entry: ValidationDiagnostic): boolean {
+  if (entry.handling === "should_demote" || entry.handling === "auto_fixable") return false;
+  const category = entry.category.toLowerCase();
+  if (category.includes("compile") || category.includes("missing_code_block")) return true;
+  if (category.includes("short") || category.includes("collision")) return true;
+  if (category.includes("trace_error") || category.includes("via_clearance_error")) return true;
+  if (category.includes("kicad_schema_missing") || category.includes("kicad_schema_analysis_error")) {
+    return true;
+  }
+  if (category.includes("clearance") && entry.severity >= 7) return true;
+  return entry.severity >= 8;
+}
+
+function prioritizeDiagnosticsForRetry(diagnostics: ValidationDiagnostic[]) {
+  const deduped = dedupeDiagnostics(diagnostics);
+  const blocking = deduped
+    .filter((entry) => isBlockingDiagnostic(entry))
+    .sort((a, b) => b.severity - a.severity);
+  const advisory = deduped
+    .filter((entry) => !isBlockingDiagnostic(entry))
+    .sort((a, b) => b.severity - a.severity);
+
+  const focused = [
+    ...blocking.slice(0, 14),
+    ...advisory.slice(0, blocking.length > 0 ? 4 : 10),
+  ];
+
+  return {
+    deduped,
+    blocking,
+    advisory,
+    focused,
+  };
+}
+
+function limitDiagnosticsForReviewFindings(
+  diagnostics: ValidationDiagnostic[],
+  limit = 24,
+): ValidationDiagnostic[] {
+  const prioritized = prioritizeDiagnosticsForRetry(diagnostics);
+  return [...prioritized.blocking, ...prioritized.advisory]
+    .slice(0, limit);
+}
+
+interface SpeculativeCompileHandle {
+  code: string;
+  promise: Promise<Awaited<ReturnType<typeof compileAndValidateWithKicad>>>;
+}
+
 async function runAgentAttempt(params: {
   prompt: string;
   apiKey: string;
   controller: ReadableStreamDefaultController<Uint8Array>;
   encoder: TextEncoder;
+  signal?: AbortSignal;
+  attempt?: number;
+  enableSpeculativeCompile?: boolean;
 }) {
   let fullText = "";
   let totalCostUsd = 0;
+  let speculativeCompile: SpeculativeCompileHandle | null = null;
 
+  const safeEnqueue = (event: SSEEvent) => {
+    if (params.controller.desiredSize === null) return;
+    params.controller.enqueue(params.encoder.encode(sseEncode(event)));
+  };
+
+  const sdkAbort = new AbortController();
+  const forwardAbort = () => {
+    sdkAbort.abort();
+  };
+  if (params.signal) {
+    if (params.signal.aborted) {
+      forwardAbort();
+    } else {
+      params.signal.addEventListener("abort", forwardAbort, { once: true });
+    }
+  }
   const agentQuery = query({
     prompt: params.prompt,
     options: {
@@ -507,6 +960,7 @@ async function runAgentAttempt(params: {
       persistSession: false,
       permissionMode: "bypassPermissions",
       allowDangerouslySkipPermissions: true,
+      abortController: sdkAbort,
       allowedTools: [
         "WebFetch",
         "WebSearch",
@@ -521,58 +975,42 @@ async function runAgentAttempt(params: {
         PreToolUse: [{
           hooks: [async (input): Promise<HookJSONOutput> => {
             const h = input as PreToolUseHookInput;
-            params.controller.enqueue(
-              params.encoder.encode(
-                sseEncode({
-                  type: "tool_start",
-                  tool: h.tool_name,
-                  input: h.tool_input,
-                })
-              )
-            );
+            safeEnqueue({
+              type: "tool_start",
+              tool: h.tool_name,
+              input: h.tool_input,
+            });
             return { continue: true };
           }],
         }],
         PostToolUse: [{
           hooks: [async (input): Promise<HookJSONOutput> => {
             const h = input as PostToolUseHookInput;
-            params.controller.enqueue(
-              params.encoder.encode(
-                sseEncode({
-                  type: "tool_result",
-                  tool: h.tool_name,
-                  output: h.tool_response,
-                })
-              )
-            );
+            safeEnqueue({
+              type: "tool_result",
+              tool: h.tool_name,
+              output: h.tool_response,
+            });
             return { continue: true };
           }],
         }],
         SubagentStart: [{
           hooks: [async (input): Promise<HookJSONOutput> => {
             const h = input as SubagentStartHookInput;
-            params.controller.enqueue(
-              params.encoder.encode(
-                sseEncode({
-                  type: "subagent_start",
-                  agent: h.agent_type,
-                })
-              )
-            );
+            safeEnqueue({
+              type: "subagent_start",
+              agent: h.agent_type,
+            });
             return { continue: true };
           }],
         }],
         SubagentStop: [{
           hooks: [async (input): Promise<HookJSONOutput> => {
             const h = input as SubagentStopHookInput;
-            params.controller.enqueue(
-              params.encoder.encode(
-                sseEncode({
-                  type: "subagent_stop",
-                  agent: h.agent_type,
-                })
-              )
-            );
+            safeEnqueue({
+              type: "subagent_stop",
+              agent: h.agent_type,
+            });
             return { continue: true };
           }],
         }],
@@ -580,34 +1018,54 @@ async function runAgentAttempt(params: {
     },
   });
 
-  for await (const message of agentQuery) {
-    if (message.type === "result") {
-      const result = message as Record<string, unknown>;
-      if (typeof result.total_cost_usd === "number") {
-        totalCostUsd += result.total_cost_usd;
+  try {
+    for await (const message of agentQuery) {
+      if (params.signal?.aborted) {
+        throw new DOMException("Agent attempt aborted", "AbortError");
       }
-      break;
-    }
+      if (message.type === "result") {
+        const result = message as Record<string, unknown>;
+        const resultText = typeof result.result === "string" ? result.result : null;
+        if (typeof result.total_cost_usd === "number") {
+          totalCostUsd += result.total_cost_usd;
+        }
+        if (resultText && resultText.length > fullText.length) {
+          fullText = resultText;
+        }
+        break;
+      }
 
-    if (message.type === "stream_event" && "event" in message) {
-      const event = (message as { event: Record<string, unknown> }).event;
-      if (event.type === "content_block_delta") {
-        const delta = event.delta as Record<string, unknown> | undefined;
-        if (delta?.type === "text_delta" && typeof delta.text === "string") {
-          fullText += delta.text;
-        }
-        if (delta?.type === "thinking_delta" && typeof delta.thinking === "string") {
-          params.controller.enqueue(
-            params.encoder.encode(
-              sseEncode({ type: "thinking", content: delta.thinking })
-            )
-          );
+      if (message.type === "stream_event" && "event" in message) {
+        const event = (message as { event: Record<string, unknown> }).event;
+        if (event.type === "content_block_delta") {
+          const delta = event.delta as Record<string, unknown> | undefined;
+          if (delta?.type === "text_delta" && typeof delta.text === "string") {
+            fullText += delta.text;
+
+            if (params.enableSpeculativeCompile && !speculativeCompile) {
+              const code = extractCodeFromText(fullText);
+              if (code && code.length > 50) {
+                speculativeCompile = {
+                  code,
+                  promise: compileAndValidateWithKicad(code, params.signal),
+                };
+              }
+            }
+          }
+          if (delta?.type === "thinking_delta" && typeof delta.thinking === "string") {
+            safeEnqueue({ type: "thinking", content: delta.thinking });
+          }
         }
       }
     }
+  } finally {
+    if (params.signal) {
+      params.signal.removeEventListener("abort", forwardAbort);
+    }
+    agentQuery.close?.();
   }
 
-  return { fullText, totalCostUsd };
+  return { fullText, totalCostUsd, speculativeCompile };
 }
 
 export async function POST(req: Request) {
@@ -636,23 +1094,75 @@ export async function POST(req: Request) {
     );
   }
 
-  const { id: sessionId, context: sessionContext } = getOrCreateSession(
+  const { id: sessionId, context: sessionContext } = await getOrCreateSession(
     body.projectId,
     body.sessionId
   );
+  const runId = createRunId();
+  const existingRun = ACTIVE_RUNS_BY_SESSION.get(sessionId);
+  if (existingRun) {
+    existingRun.abort.abort("Superseded by a newer request for this session");
+  }
+  const runAbort = new AbortController();
+  ACTIVE_RUNS_BY_SESSION.set(sessionId, { runId, abort: runAbort });
+  const requestSignal = composeAbortSignal(req.signal, runAbort.signal);
 
   const selectedPhase: DesignPhase =
     body.phase ??
     inferDefaultPhase(body.prompt, sessionContext.requirements.length > 0 && sessionContext.architecture.length > 0);
 
   const encoder = new TextEncoder();
-  const adaptiveGuardrails = await getAdaptiveGuardrailsPersistent();
+  const guardrailsPromise = getAdaptiveGuardrailsPersistent();
 
   const stream = new ReadableStream({
     async start(controller) {
       const emit = (event: SSEEvent) => {
+        if (controller.desiredSize === null) return;
         controller.enqueue(encoder.encode(sseEncode(event)));
       };
+      const emitTiming = (stage: string, durationMs: number, attempt?: number) => {
+        emit({
+          type: "timing_metric",
+          stage,
+          durationMs,
+          attempt,
+        });
+      };
+      const timed = async <T,>(
+        stage: string,
+        work: () => Promise<T>,
+        attempt?: number,
+      ): Promise<T> => {
+        const startedAt = Date.now();
+        try {
+          return await work();
+        } finally {
+          emitTiming(stage, Date.now() - startedAt, attempt);
+        }
+      };
+
+      const heartbeatInterval = setInterval(() => {
+        try {
+          emit({ type: "ping" } as SSEEvent);
+        } catch {
+          clearInterval(heartbeatInterval);
+        }
+      }, 15_000);
+
+      if (requestSignal?.aborted) {
+        emit({
+          type: "error",
+          message: "Request was aborted before orchestration started",
+        });
+        clearInterval(heartbeatInterval);
+        await persistSessionContext(sessionId, sessionContext).catch(() => {});
+        const active = ACTIVE_RUNS_BY_SESSION.get(sessionId);
+        if (active?.runId === runId) {
+          ACTIVE_RUNS_BY_SESSION.delete(sessionId);
+        }
+        controller.close();
+        return;
+      }
 
       emit({ type: "session_started", sessionId, projectId: sessionContext.projectId });
       emit({
@@ -692,7 +1202,12 @@ export async function POST(req: Request) {
         }
       }
 
-      if (selectedPhase === "requirements" || selectedPhase === "architecture") {
+      const shouldEmitArchitecture =
+        selectedPhase === "requirements" ||
+        selectedPhase === "architecture" ||
+        sessionContext.architecture.length === 0;
+
+      if (shouldEmitArchitecture) {
         const promptTerms = sessionContext.requirements.map((item) => item.title).join(". ");
         const baseText = promptTerms.length > 0 ? promptTerms : body.prompt;
         const architecture = architectureFromRequirements(baseText);
@@ -734,18 +1249,29 @@ export async function POST(req: Request) {
               message: "Loading baseline schematic for surgical edit from previous code",
             });
 
-            const baselineValidation = await compileAndValidateWithKicad(body.previousCode);
+            const baselineValidation = await timed(
+              "baseline_compile_validate",
+              () => compileAndValidateWithKicad(body.previousCode!, requestSignal),
+            );
             if (baselineValidation.kicadResult?.kicadSchema) {
               baseSchema = baselineValidation.kicadResult.kicadSchema;
               sessionContext.lastKicadSchema = baseSchema;
               sessionContext.lastGeneratedCode = body.previousCode;
+              const baselineFindings = emitReviewFindingsFromDiagnostics({
+                phase: selectedPhase,
+                diagnostics: limitDiagnosticsForReviewFindings(
+                  baselineValidation.allDiagnostics,
+                ),
+                emit,
+              });
+              sessionContext.reviewFindings = closeResolvedFindingsForPhase(
+                sessionContext.reviewFindings,
+                selectedPhase,
+                new Set(baselineFindings.map((finding) => finding.id)),
+              );
               sessionContext.reviewFindings = mergeReviewFindings(
                 sessionContext.reviewFindings,
-                emitReviewFindingsFromDiagnostics({
-                  phase: selectedPhase,
-                  diagnostics: baselineValidation.allDiagnostics,
-                  emit,
-                })
+                baselineFindings,
               );
             }
           }
@@ -798,6 +1324,10 @@ export async function POST(req: Request) {
       }
 
       try {
+        const adaptiveGuardrails = await timed(
+          "adaptive_guardrails_fetch",
+          async () => guardrailsPromise,
+        );
         const shouldValidate =
           selectedPhase === "implementation" ||
           selectedPhase === "review" ||
@@ -805,13 +1335,23 @@ export async function POST(req: Request) {
 
         let previousAttemptScore = Number.POSITIVE_INFINITY;
         let previousAttemptSignature: string | null = null;
+        let previousDiagnosticsCount = Number.POSITIVE_INFINITY;
         let stagnantAttempts = 0;
+        let repeatedSignatureCount = 0;
         let lastAttemptText = "";
         let lastAttemptDiagnostics: ValidationDiagnostic[] = [];
         let totalCostUsd = 0;
+        let attemptsUsed = 0;
+        const diffBaselineCode = sessionContext.lastGeneratedCode ?? body.previousCode ?? null;
 
         let bestAttempt:
-          | { text: string; code: string; score: number; diagnostics: ValidationDiagnostic[] }
+          | {
+              text: string;
+              code: string;
+              score: number;
+              blockingCount: number;
+              diagnostics: ValidationDiagnostic[];
+            }
           | null = null;
 
         if (!shouldValidate) {
@@ -821,19 +1361,23 @@ export async function POST(req: Request) {
             progress: 15,
             message: `${selectedPhase} checkpoints only; skipping validation loop`,
           });
-          const phaseAttempt = await runAgentAttempt({
-            prompt: promptForAttempt,
-            apiKey,
-            controller,
-            encoder,
-          });
+          const phaseAttempt = await timed(
+            "agent_attempt",
+            () =>
+              runAgentAttempt({
+                prompt: promptForAttempt,
+                apiKey,
+                controller,
+                encoder,
+                signal: requestSignal,
+                attempt: 1,
+              }),
+            1,
+          );
 
           totalCostUsd += phaseAttempt.totalCostUsd;
+          attemptsUsed = 1;
           lastAttemptText = phaseAttempt.fullText;
-          emit({
-            type: "text",
-            content: phaseAttempt.fullText,
-          });
           emit({
             type: "phase_progress",
             phase: selectedPhase,
@@ -844,10 +1388,15 @@ export async function POST(req: Request) {
             text: phaseAttempt.fullText,
             code: extractCodeFromText(phaseAttempt.fullText) || "",
             score: 0,
+            blockingCount: 0,
             diagnostics: [],
           };
         } else {
           for (let attempt = 1; attempt <= MAX_REPAIR_ATTEMPTS; attempt++) {
+            attemptsUsed = attempt;
+            if (requestSignal?.aborted) break;
+            const attemptTimeoutSignal = AbortSignal.timeout(PER_ATTEMPT_TIMEOUT_MS);
+            const attemptSignal = composeAbortSignal(requestSignal, attemptTimeoutSignal);
             emit({ type: "retry_start", attempt, maxAttempts: MAX_REPAIR_ATTEMPTS });
             emit({
               type: "phase_progress",
@@ -856,87 +1405,250 @@ export async function POST(req: Request) {
               message: `Attempt ${attempt}/${MAX_REPAIR_ATTEMPTS}`,
             });
 
-            const agentAttempt = await runAgentAttempt({
-              prompt: promptForAttempt,
-              apiKey,
-              controller,
-              encoder,
-            });
+            let agentAttempt: Awaited<ReturnType<typeof runAgentAttempt>> | null = null;
+            try {
+              agentAttempt = await timed(
+                "agent_attempt",
+                () =>
+                  runAgentAttempt({
+                    prompt: promptForAttempt,
+                    apiKey,
+                    controller,
+                    encoder,
+                    enableSpeculativeCompile: true,
+                    signal: attemptSignal,
+                    attempt,
+                  }),
+                attempt,
+              );
+            } catch (error) {
+              if (isAbortLikeError(error) && !requestSignal?.aborted) {
+                emit({
+                  type: "phase_progress",
+                  phase: selectedPhase,
+                  progress: Math.min(88, 28 + attempt * 15),
+                  message: `Attempt ${attempt} timed out; preparing retry`,
+                });
+              } else {
+                throw error;
+              }
+            }
 
-            totalCostUsd += agentAttempt.totalCostUsd;
-            lastAttemptText = agentAttempt.fullText;
+            if (agentAttempt) {
+              totalCostUsd += agentAttempt.totalCostUsd;
+              lastAttemptText = agentAttempt.fullText;
+            }
 
-            const extractedCode = extractCodeFromText(agentAttempt.fullText);
+            const extractedCode = agentAttempt
+              ? extractCodeFromText(agentAttempt.fullText)
+              : null;
             let compileFailed = false;
             let diagnostics: ValidationDiagnostic[] = [];
+            let blockingDiagnostics: ValidationDiagnostic[] = [];
+            let advisoryDiagnostics: ValidationDiagnostic[] = [];
+            let focusedDiagnostics: ValidationDiagnostic[] = [];
+            const timedOutWithoutResult = !agentAttempt;
 
             if (!extractedCode) {
               compileFailed = true;
               diagnostics = [
                 {
-                  category: "missing_code_block",
-                  message: "Assistant response did not include a ```tsx code block.",
-                  severity: 10,
-                  signature: "missing_code_block",
+                  category: timedOutWithoutResult ? "attempt_timeout" : "missing_code_block",
+                  message: timedOutWithoutResult
+                    ? "Assistant attempt timed out before returning a valid ```tsx code block."
+                    : "Assistant response did not include a ```tsx code block.",
+                  severity: timedOutWithoutResult ? 9 : 10,
+                  signature: timedOutWithoutResult ? `attempt_timeout|${attempt}` : "missing_code_block",
+                  family: timedOutWithoutResult ? "attempt_timeout" : "missing_code_block",
                 },
               ];
+              const prioritized = prioritizeDiagnosticsForRetry(diagnostics);
+              blockingDiagnostics = prioritized.blocking;
+              advisoryDiagnostics = prioritized.advisory;
+              focusedDiagnostics = prioritized.focused;
             } else {
-              const validation = await compileAndValidateWithKicad(extractedCode);
-              diagnostics = validation.allDiagnostics;
+              emit({ type: "code", file: "main.tsx", content: extractedCode });
+              emit({
+                type: "iteration_diff",
+                attempt,
+                diff: createIterationDiff(diffBaselineCode, extractedCode),
+              });
+              const canReuseSpeculative =
+                agentAttempt &&
+                agentAttempt.speculativeCompile &&
+                agentAttempt.speculativeCompile.code === extractedCode;
+              const validation = canReuseSpeculative
+                ? await timed(
+                    "compile_validate_speculative_reuse",
+                    async () => agentAttempt!.speculativeCompile!.promise,
+                    attempt,
+                  )
+                : await timed(
+                    "compile_validate",
+                    () => compileAndValidateWithKicad(extractedCode, attemptSignal),
+                    attempt,
+                  );
+              const prioritized = prioritizeDiagnosticsForRetry(validation.allDiagnostics);
+              diagnostics = prioritized.deduped;
+              blockingDiagnostics = prioritized.blocking;
+              advisoryDiagnostics = prioritized.advisory;
+              focusedDiagnostics = prioritized.focused;
               if (validation.kicadResult?.kicadSchema) {
                 sessionContext.lastKicadSchema = validation.kicadResult.kicadSchema;
                 sessionContext.lastGeneratedCode = extractedCode;
               }
 
+              const attemptFindings = emitReviewFindingsFromDiagnostics({
+                phase: selectedPhase,
+                diagnostics: limitDiagnosticsForReviewFindings(diagnostics),
+                emit,
+              });
+              sessionContext.reviewFindings = closeResolvedFindingsForPhase(
+                sessionContext.reviewFindings,
+                selectedPhase,
+                new Set(attemptFindings.map((finding) => finding.id)),
+              );
               sessionContext.reviewFindings = mergeReviewFindings(
                 sessionContext.reviewFindings,
-                emitReviewFindingsFromDiagnostics({
-                  phase: selectedPhase,
-                  diagnostics,
-                  emit,
-                })
+                attemptFindings,
               );
             }
 
+            const blockingBeforeDeterministic = blockingDiagnostics.length;
+            let deterministicOutcome = applyDeterministicFixes(diagnostics);
+            let deterministicRevalidated = false;
+
+            if (extractedCode && deterministicOutcome.autoFixedCount > 0) {
+              const initialOutcome = deterministicOutcome;
+              try {
+                const postFixValidation = await timed(
+                  "compile_validate_post_deterministic",
+                  () => compileAndValidateWithKicad(extractedCode, attemptSignal),
+                  attempt,
+                );
+                deterministicRevalidated = true;
+                if (postFixValidation.kicadResult?.kicadSchema) {
+                  sessionContext.lastKicadSchema = postFixValidation.kicadResult.kicadSchema;
+                  sessionContext.lastGeneratedCode = extractedCode;
+                }
+                const postFixPrioritized = prioritizeDiagnosticsForRetry(
+                  postFixValidation.allDiagnostics,
+                );
+                const postValidationOutcome = applyDeterministicFixes(postFixPrioritized.deduped);
+                deterministicOutcome = {
+                  diagnostics: postValidationOutcome.diagnostics,
+                  autoFixedCount:
+                    initialOutcome.autoFixedCount + postValidationOutcome.autoFixedCount,
+                  demotedCount:
+                    initialOutcome.demotedCount + postValidationOutcome.demotedCount,
+                  appliedActions: uniqueSorted([
+                    ...initialOutcome.appliedActions,
+                    ...postValidationOutcome.appliedActions,
+                  ]),
+                  autoFixableFamilies: uniqueSorted([
+                    ...initialOutcome.autoFixableFamilies,
+                    ...postValidationOutcome.autoFixableFamilies,
+                  ]),
+                  shouldDemoteFamilies: uniqueSorted([
+                    ...initialOutcome.shouldDemoteFamilies,
+                    ...postValidationOutcome.shouldDemoteFamilies,
+                  ]),
+                  mustRepairFamilies: uniqueSorted([
+                    ...initialOutcome.mustRepairFamilies,
+                    ...postValidationOutcome.mustRepairFamilies,
+                  ]),
+                };
+              } catch {
+                deterministicOutcome = {
+                  ...deterministicOutcome,
+                  appliedActions: uniqueSorted([
+                    ...deterministicOutcome.appliedActions,
+                    "revalidate_failed",
+                  ]),
+                };
+              }
+            }
+
+            const postDeterministic = prioritizeDiagnosticsForRetry(deterministicOutcome.diagnostics);
+            diagnostics = postDeterministic.deduped;
+            blockingDiagnostics = postDeterministic.blocking;
+            advisoryDiagnostics = postDeterministic.advisory;
+            focusedDiagnostics = postDeterministic.focused;
+            const blockingAfterDeterministic = blockingDiagnostics.length;
+
+            emit({
+              type: "repair_plan",
+              plan: {
+                attempt,
+                autoFixableFamilies: deterministicOutcome.autoFixableFamilies,
+                shouldDemoteFamilies: deterministicOutcome.shouldDemoteFamilies,
+                mustRepairFamilies: deterministicOutcome.mustRepairFamilies,
+              },
+            });
+            emit({
+              type: "repair_result",
+              result: {
+                attempt,
+                blockingBefore: blockingBeforeDeterministic,
+                blockingAfter: blockingAfterDeterministic,
+                demotedCount: deterministicOutcome.demotedCount,
+                autoFixedCount: deterministicOutcome.autoFixedCount,
+                revalidated: deterministicRevalidated,
+                appliedActions: deterministicOutcome.appliedActions,
+              },
+            });
+
             lastAttemptDiagnostics = diagnostics;
-            if (!compileFailed && diagnostics.length === 0 && extractedCode) {
-              // keep all findings open until user explicitly acts on them
-            } else if (diagnostics.length > 0) {
-              void recordDiagnosticsSamplePersistent(diagnostics);
+            if (blockingDiagnostics.length > 0) {
+              void recordDiagnosticsSamplePersistent(blockingDiagnostics);
             }
 
             emit({
               type: "validation_errors",
               attempt,
-              diagnostics,
+              diagnostics: focusedDiagnostics,
             });
 
-            const score = computeDiagnosticsScore(diagnostics, compileFailed);
-            const signature = createDiagnosticsSetSignature(diagnostics);
-            const isClean =
-              !compileFailed && diagnostics.length === 0 && Boolean(extractedCode);
+            const score = computeDiagnosticsScore(focusedDiagnostics, compileFailed);
+            const signature = createDiagnosticsSetSignature(focusedDiagnostics);
+            const isGatePass =
+              !compileFailed && blockingDiagnostics.length === 0 && Boolean(extractedCode);
 
-            if (extractedCode && (!bestAttempt || score < bestAttempt.score)) {
+            if (
+              extractedCode &&
+              (!bestAttempt ||
+                blockingDiagnostics.length < bestAttempt.blockingCount ||
+                (blockingDiagnostics.length === bestAttempt.blockingCount &&
+                  score < bestAttempt.score))
+            ) {
               bestAttempt = {
                 text: agentAttempt.fullText,
                 code: extractedCode,
                 score,
+                blockingCount: blockingDiagnostics.length,
                 diagnostics,
               };
             }
 
-            if (isClean) {
+            if (isGatePass) {
+              const advisoryMessage =
+                advisoryDiagnostics.length > 0
+                  ? `${advisoryDiagnostics.length} advisory issue(s) remain`
+                  : "No issues detected in this attempt";
               emit({
                 type: "gate_passed",
                 phase: selectedPhase,
                 gate: "compile_kicad_validation",
-                message: "No issues detected in this attempt",
+                message: advisoryMessage,
               });
               emit({
                 type: "phase_progress",
                 phase: selectedPhase,
                 progress: 100,
-                message: "Validation clean",
+                message:
+                  advisoryDiagnostics.length > 0
+                    ? "Blocking issues cleared; advisory findings remain"
+                    : "Validation clean",
               });
               emit({
                 type: "phase_block_done",
@@ -949,7 +1661,7 @@ export async function POST(req: Request) {
                 type: "retry_result",
                 attempt,
                 status: "clean",
-                diagnosticsCount: 0,
+                diagnosticsCount: advisoryDiagnostics.length,
                 score,
               });
               break;
@@ -963,7 +1675,13 @@ export async function POST(req: Request) {
             });
 
             const sameAsPrevious = previousAttemptSignature === signature;
-            if (score < previousAttemptScore) {
+            repeatedSignatureCount = sameAsPrevious ? repeatedSignatureCount + 1 : 0;
+
+            const scoreDelta = previousAttemptScore - score;
+            const diagnosticsImproved = diagnostics.length < previousDiagnosticsCount;
+            const meaningfulImprovement =
+              scoreDelta >= MIN_SCORE_IMPROVEMENT || diagnosticsImproved;
+            if (meaningfulImprovement) {
               stagnantAttempts = 0;
             } else {
               stagnantAttempts += 1;
@@ -971,8 +1689,12 @@ export async function POST(req: Request) {
 
             previousAttemptScore = score;
             previousAttemptSignature = signature;
+            previousDiagnosticsCount = diagnostics.length;
             const reachedMaxAttempts = attempt === MAX_REPAIR_ATTEMPTS;
-            const shouldStop = reachedMaxAttempts || sameAsPrevious || stagnantAttempts >= 2;
+            const repeatedSignatureStall =
+              repeatedSignatureCount >= SIGNATURE_REPEAT_LIMIT;
+            const noProgressStall = stagnantAttempts >= RETRY_STAGNATION_LIMIT;
+            const shouldStop = reachedMaxAttempts || repeatedSignatureStall || noProgressStall;
 
             emit({
               type: "retry_result",
@@ -983,7 +1705,7 @@ export async function POST(req: Request) {
               reason: shouldStop
                 ? reachedMaxAttempts
                   ? "max_attempts"
-                  : sameAsPrevious
+                  : repeatedSignatureStall
                     ? "stagnant_signature"
                     : "no_improvement"
                 : undefined,
@@ -997,10 +1719,11 @@ export async function POST(req: Request) {
               attemptedCode:
                 extractedCode ??
                 "// No code block was returned. You must return a full `tsx` file in a single fenced code block.",
-              diagnostics,
+              diagnostics: focusedDiagnostics,
               attempt,
               maxAttempts: MAX_REPAIR_ATTEMPTS,
               adaptiveGuardrails,
+              deterministicActions: deterministicOutcome.appliedActions,
             });
             emit({
               type: "phase_progress",
@@ -1011,10 +1734,13 @@ export async function POST(req: Request) {
           }
         }
 
+        const bestAttemptBlocking = bestAttempt
+          ? prioritizeDiagnosticsForRetry(bestAttempt.diagnostics).blocking
+          : [];
         const finalText = bestAttempt
-          ? bestAttempt.diagnostics.length > 0
-            ? `${bestAttempt.text}\n\nNote: unresolved validation issues remain:\n${formatDiagnosticsForPrompt(
-                bestAttempt.diagnostics,
+          ? bestAttemptBlocking.length > 0
+            ? `${bestAttempt.text}\n\nNote: unresolved blocking validation issues remain:\n${formatDiagnosticsForPrompt(
+                bestAttemptBlocking,
                 8
               )}`
             : bestAttempt.text
@@ -1022,12 +1748,46 @@ export async function POST(req: Request) {
               lastAttemptDiagnostics,
               5
             )}`;
+        const diagnosticsForSummary = bestAttempt?.diagnostics ?? lastAttemptDiagnostics;
+        const prioritizedSummary = prioritizeDiagnosticsForRetry(diagnosticsForSummary);
+        const blockingDiagnosticsCount = prioritizedSummary.blocking.length;
+        const warningDiagnosticsCount = prioritizedSummary.advisory.length;
+        const openCriticalFindings = sessionContext.reviewFindings.filter(
+          (finding) =>
+            finding.status === "open" &&
+            finding.severity === "critical" &&
+            finding.phase === selectedPhase,
+        ).length;
+        const unresolvedBlockers = prioritizedSummary.blocking
+          .slice(0, 6)
+          .map((entry) => `[${entry.category}] ${entry.message}`);
+        const finalSummary = {
+          designIntent: compactIntent(promptForUser),
+          constraintsSatisfied: sessionContext.requirements
+            .slice(0, 8)
+            .map((item) => item.title),
+          unresolvedBlockers,
+          manufacturingReadinessScore: computeManufacturingReadinessScore(
+            prioritizedSummary.deduped,
+            openCriticalFindings,
+          ),
+          diagnosticsCount: prioritizedSummary.deduped.length,
+          blockingDiagnosticsCount,
+          warningDiagnosticsCount,
+          openCriticalFindings,
+          attemptsUsed,
+          phase: selectedPhase,
+        };
 
         emit({
           type: "phase_progress",
           phase: selectedPhase,
-          progress: bestAttempt && bestAttempt.diagnostics.length === 0 ? 100 : 95,
+          progress: bestAttempt && bestAttemptBlocking.length === 0 ? 100 : 95,
           message: "Final attempt returned",
+        });
+        emit({
+          type: "final_summary",
+          summary: finalSummary,
         });
         emit({ type: "text", content: finalText });
         emit({
@@ -1039,10 +1799,22 @@ export async function POST(req: Request) {
       } catch (error) {
         emit({
           type: "error",
-          message: error instanceof Error ? error.message : "Unknown agent error",
+          message: isAbortLikeError(error)
+            ? "Agent run aborted or timed out"
+            : error instanceof Error
+              ? error.message
+              : "Unknown agent error",
         });
       } finally {
-        controller.close();
+        clearInterval(heartbeatInterval);
+        await persistSessionContext(sessionId, sessionContext).catch(() => {});
+        const active = ACTIVE_RUNS_BY_SESSION.get(sessionId);
+        if (active?.runId === runId) {
+          ACTIVE_RUNS_BY_SESSION.delete(sessionId);
+        }
+        if (controller.desiredSize !== null) {
+          controller.close();
+        }
       }
     },
   });

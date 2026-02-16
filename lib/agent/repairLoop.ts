@@ -4,13 +4,130 @@ import {
   type KicadValidationResult,
   assessKicadFindings,
   assessKicadFindingsFromRaw,
+  resolveDiagnosticFamily,
 } from "@/lib/kicad/review";
 
 const COMPILE_API_URL = "https://compile.tscircuit.com/api/compile";
 const SANDBOX_RUNTIME = "node24";
 const SANDBOX_TIMEOUT_MS = 2 * 60 * 1000;
+const COMPILE_FETCH_TIMEOUT_MS = 30_000;
+const COMPILE_FETCH_RETRIES = 2;
+const COMPILE_FETCH_BACKOFF_MS = 350;
+const SANDBOX_POOL_SIZE = Math.max(
+  1,
+  Number.parseInt(process.env.CIRCUITFORGE_SANDBOX_POOL_SIZE ?? "4", 10) || 4,
+);
 
 type CompileSource = "sandbox" | "inline";
+
+const sandboxPool: Sandbox[] = [];
+let createdSandboxCount = 0;
+const sandboxWaitQueue: Array<{
+  resolve: (sandbox: Sandbox) => void;
+  reject: (error: Error) => void;
+  signal?: AbortSignal;
+  onAbort?: () => void;
+}> = [];
+
+function makeAbortError(message: string) {
+  return new DOMException(message, "AbortError");
+}
+
+function dequeueActiveWaiter() {
+  while (sandboxWaitQueue.length > 0) {
+    const waiter = sandboxWaitQueue.shift();
+    if (!waiter) continue;
+    if (waiter.signal?.aborted) continue;
+    if (waiter.signal && waiter.onAbort) {
+      waiter.signal.removeEventListener("abort", waiter.onAbort);
+    }
+    return waiter;
+  }
+  return null;
+}
+
+async function hydrateWaiterFromNewSandbox() {
+  const waiter = dequeueActiveWaiter();
+  if (!waiter) return;
+  if (createdSandboxCount >= SANDBOX_POOL_SIZE) {
+    sandboxWaitQueue.unshift(waiter);
+    return;
+  }
+
+  createdSandboxCount += 1;
+  try {
+    const sandbox = await Sandbox.create({
+      runtime: SANDBOX_RUNTIME,
+      timeout: SANDBOX_TIMEOUT_MS,
+    });
+    waiter.resolve(sandbox);
+  } catch (error) {
+    createdSandboxCount = Math.max(0, createdSandboxCount - 1);
+    waiter.reject(error instanceof Error ? error : new Error(String(error)));
+    void hydrateWaiterFromNewSandbox();
+  }
+}
+
+async function acquireSandbox(signal?: AbortSignal): Promise<Sandbox> {
+  if (signal?.aborted) throw makeAbortError("Sandbox acquisition aborted");
+  const pooled = sandboxPool.pop();
+  if (pooled) return pooled;
+
+  if (createdSandboxCount < SANDBOX_POOL_SIZE) {
+    createdSandboxCount += 1;
+    try {
+      return await Sandbox.create({ runtime: SANDBOX_RUNTIME, timeout: SANDBOX_TIMEOUT_MS });
+    } catch (error) {
+      createdSandboxCount = Math.max(0, createdSandboxCount - 1);
+      throw error;
+    }
+  }
+
+  return new Promise<Sandbox>((resolve, reject) => {
+    const waiter = {
+      resolve,
+      reject,
+      signal,
+    } as {
+      resolve: (sandbox: Sandbox) => void;
+      reject: (error: Error) => void;
+      signal?: AbortSignal;
+      onAbort?: () => void;
+    };
+    if (signal) {
+      const onAbort = () => {
+        const idx = sandboxWaitQueue.indexOf(waiter);
+        if (idx >= 0) sandboxWaitQueue.splice(idx, 1);
+        reject(makeAbortError("Sandbox queue wait aborted"));
+      };
+      waiter.onAbort = onAbort;
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
+    sandboxWaitQueue.push(waiter);
+  });
+}
+
+function releaseSandbox(sb: Sandbox) {
+  const waiter = dequeueActiveWaiter();
+  if (waiter) {
+    waiter.resolve(sb);
+    return;
+  }
+
+  if (sandboxPool.length < SANDBOX_POOL_SIZE) {
+    sandboxPool.push(sb);
+    return;
+  }
+
+  createdSandboxCount = Math.max(0, createdSandboxCount - 1);
+  sb.stop().catch(() => {});
+}
+
+function discardSandbox(sb: Sandbox) {
+  createdSandboxCount = Math.max(0, createdSandboxCount - 1);
+  sb.stop().catch(() => {});
+  void hydrateWaiterFromNewSandbox();
+}
 
 interface KicadDiagnostics {
   findings: ValidationDiagnostic[];
@@ -69,30 +186,78 @@ function parseCompileResult(raw: { ok: boolean; status: number; text: string; so
   };
 }
 
-async function compileInline(code: string): Promise<CompileResult> {
-  const response = await fetch(COMPILE_API_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ fs_map: { "main.tsx": code } }),
-  });
-
-  const text = await response.text();
-  return parseCompileResult({
-    ok: response.ok,
-    status: response.status,
-    text,
-    source: "inline",
+async function delay(ms: number, signal?: AbortSignal) {
+  if (ms <= 0) return;
+  if (signal?.aborted) throw makeAbortError("Delay aborted");
+  await new Promise<void>((resolve, reject) => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const onAbort = () => {
+      if (timer) clearTimeout(timer);
+      if (signal) signal.removeEventListener("abort", onAbort);
+      reject(makeAbortError("Delay aborted"));
+    };
+    timer = setTimeout(() => {
+      if (signal) signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    if (signal) {
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
   });
 }
 
-async function compileWithSandbox(code: string): Promise<CompileResult> {
-  let sandbox: Sandbox | null = null;
+async function compileInline(code: string, signal?: AbortSignal): Promise<CompileResult> {
+  const timeoutSignal = AbortSignal.timeout(COMPILE_FETCH_TIMEOUT_MS);
+  const combinedSignal = signal
+    ? AbortSignal.any([signal, timeoutSignal])
+    : timeoutSignal;
+  let lastError: unknown = null;
+
+  for (let attempt = 0; attempt <= COMPILE_FETCH_RETRIES; attempt += 1) {
+    try {
+      const response = await fetch(COMPILE_API_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fs_map: { "main.tsx": code } }),
+        signal: combinedSignal,
+      });
+
+      const text = await response.text();
+      const result = parseCompileResult({
+        ok: response.ok,
+        status: response.status,
+        text,
+        source: "inline",
+      });
+
+      const shouldRetry = !response.ok && response.status >= 500 && attempt < COMPILE_FETCH_RETRIES;
+      if (!shouldRetry) return result;
+      await delay(COMPILE_FETCH_BACKOFF_MS * (attempt + 1), combinedSignal);
+      continue;
+    } catch (error) {
+      lastError = error;
+      if (attempt >= COMPILE_FETCH_RETRIES) break;
+      await delay(COMPILE_FETCH_BACKOFF_MS * (attempt + 1), combinedSignal);
+    }
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("Inline compile failed after retries");
+}
+
+async function compileWithSandbox(code: string, signal?: AbortSignal): Promise<CompileResult> {
+  if (signal?.aborted) throw makeAbortError("Compile aborted before sandbox start");
+  const sandbox = await acquireSandbox(signal);
+  let abortHandler: (() => void) | null = null;
 
   try {
-    sandbox = await Sandbox.create({
-      runtime: SANDBOX_RUNTIME,
-      timeout: SANDBOX_TIMEOUT_MS,
-    });
+    if (signal) {
+      abortHandler = () => {
+        sandbox.stop().catch(() => {});
+      };
+      signal.addEventListener("abort", abortHandler, { once: true });
+    }
 
     const payloadB64 = Buffer.from(
       JSON.stringify({ fs_map: { "main.tsx": code } }),
@@ -120,24 +285,33 @@ async function compileWithSandbox(code: string): Promise<CompileResult> {
     }
 
     const parsed = JSON.parse(stdout) as { ok: boolean; status: number; text: string };
+    if (signal?.aborted) {
+      throw makeAbortError("Compile aborted while waiting for sandbox output");
+    }
+    if (signal && abortHandler) {
+      signal.removeEventListener("abort", abortHandler);
+      abortHandler = null;
+    }
+    releaseSandbox(sandbox);
     return parseCompileResult({
       ...parsed,
       source: "sandbox",
     });
+  } catch (error) {
+    discardSandbox(sandbox);
+    throw error;
   } finally {
-    if (sandbox) {
-      await sandbox.stop().catch(() => {
-        // Ignore teardown errors.
-      });
+    if (signal && abortHandler) {
+      signal.removeEventListener("abort", abortHandler);
     }
   }
 }
 
-export async function compileForValidation(code: string): Promise<CompileResult> {
+export async function compileForValidation(code: string, signal?: AbortSignal): Promise<CompileResult> {
   try {
-    return await compileWithSandbox(code);
+    return await compileWithSandbox(code, signal);
   } catch {
-    return compileInline(code);
+    return compileInline(code, signal);
   }
 }
 
@@ -211,6 +385,7 @@ export function extractValidationDiagnostics(circuitJson: unknown[]): Validation
       severity: scoreCategory(category, "tscircuit"),
       signature: signatureWithLocation(signatureBase || category, entry),
       source: "tscircuit",
+      family: resolveDiagnosticFamily(category, message),
     });
   }
 
@@ -226,6 +401,7 @@ export function createCompileFailureDiagnostics(errorMessage: string): Validatio
       severity: 10,
       signature: `compile_error|${message.slice(0, 300)}`,
       source: "tscircuit",
+      family: resolveDiagnosticFamily("compile_error", message),
     },
   ];
 }
@@ -236,17 +412,19 @@ function mergeKicadResults(result: KicadValidationResult | null): ValidationDiag
   return findings.map((entry) => ({
     ...entry,
     source: "kicad",
+    family: entry.family ?? resolveDiagnosticFamily(entry.category, entry.message),
   }));
 }
 
 export async function compileAndValidateWithKicad(
   code: string,
+  signal?: AbortSignal,
 ): Promise<{
   compileResult: CompileResult;
   kicadResult: KicadValidationResult | null;
   allDiagnostics: ValidationDiagnostic[];
 }> {
-  const compileResult = await compileForValidation(code);
+  const compileResult = await compileForValidation(code, signal);
   if (!compileResult.ok || !compileResult.circuitJson) {
     return {
       compileResult,
@@ -255,9 +433,11 @@ export async function compileAndValidateWithKicad(
     };
   }
 
-  const kicadResult = await assessKicadFindingsFromCircuitJson(compileResult.circuitJson);
+  const [kicadResult, tscircuitDiagnostics] = await Promise.all([
+    assessKicadFindingsFromCircuitJson(compileResult.circuitJson),
+    Promise.resolve(extractValidationDiagnostics(compileResult.circuitJson)),
+  ]);
   const kicadDiagnostics = mergeKicadResults(kicadResult);
-  const tscircuitDiagnostics = extractValidationDiagnostics(compileResult.circuitJson);
 
   return {
     compileResult,
