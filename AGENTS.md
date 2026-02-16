@@ -17,11 +17,14 @@
 | `specs/` | System specifications (see `specs/README.md`) |
 | `.agents/workflows/` | Task-specific workflows |
 | `app/` | Next.js App Router (pages + API routes) |
+| `app/api/compile/` | Local tscircuit compilation route (client-side export) |
 | `app/api/kicad/` | KiCad validation endpoint and future export connectors |
 | `app/api/manufacturing/` | Manufacturing payload helper routes |
 | `components/` | React UI components |
+| `components/ai-elements/` | AI-native UI primitives (Queue, Conversation, ChainOfThought, etc.) |
 | `convex/` | Convex schema + HTTP actions for persistent self-learning memory |
 | `lib/agent/` | Agent SDK config, prompts, tools, models |
+| `lib/compile/` | Local tscircuit compiler (`@tscircuit/eval` wrapper + remote fallback) |
 | `lib/kicad/` | KiCad conversion, bridge, and review helpers |
 | `lib/stream/` | SSE event parsing + React hook |
 | `__tests__/` | Integration tests, fixtures, helpers |

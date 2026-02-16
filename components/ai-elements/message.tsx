@@ -207,12 +207,11 @@ export const MessageBranchContent = ({
     [children]
   );
 
-  // Use useEffect to update branches when they change
   useEffect(() => {
-    if (branches.length !== childrenArray.length) {
-      setBranches(childrenArray);
-    }
-  }, [childrenArray, branches, setBranches]);
+    setBranches((prev) =>
+      prev.length === childrenArray.length ? prev : childrenArray,
+    );
+  }, [childrenArray, setBranches]);
 
   return childrenArray.map((branch, index) => (
     <div

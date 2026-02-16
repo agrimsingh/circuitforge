@@ -45,16 +45,17 @@ The backend does not trust a single generation. It runs a bounded repair loop:
 
 1. Run orchestrator attempt.
 2. Extract `tsx` code block from assistant text.
-3. Validate via compile API:
-   - sandbox-first (`@vercel/sandbox`)
-   - inline compile fallback when sandbox unavailable
+3. Validate via compile:
+   - local-first (`@tscircuit/eval` CircuitRunner, no external timeout)
+   - remote `compile.tscircuit.com` API fallback on unexpected local error
 4. Parse `circuit_json` diagnostics (`*_error` entries).
 5. Score + signature diagnostics to detect convergence/stagnation.
 6. Retry with structured diagnostics and targeted fix hints (`pcb_trace_error`, `pcb_via_clearance_error`) until:
    - clean
    - max attempts
    - stagnation/no improvement
-7. Return best attempt with diagnostics note if unresolved.
+7. Review findings emitted **after** deterministic fixes so auto-fixed issues are excluded.
+8. Return best attempt with `buildPostValidationSummary()` appended (blocking count, auto-fix count, warnings, readiness score).
 
 ## SSE Event Protocol
 Each SSE event is `data: <JSON>\n\n` with the following types:
@@ -70,8 +71,11 @@ Each SSE event is `data: <JSON>\n\n` with the following types:
 { "type": "validation_errors", "attempt": 1, "diagnostics": [...] }
 { "type": "retry_result", "attempt": 1, "status": "retrying|clean|failed", "diagnosticsCount": 1, "score": 500 }
 { "type": "error", "message": "..." }
+{ "type": "final_summary", "summary": { "blockingDiagnosticsCount": 0, "warningDiagnosticsCount": 1, "manufacturingReadinessScore": 85 } }
 { "type": "done", "usage": {...} }
 ```
+
+Note: The `tool_start` event for `TodoWrite` is intercepted client-side to extract `TodoItem[]` and render an in-chat task queue.
 
 ## Adaptive Error Memory
 

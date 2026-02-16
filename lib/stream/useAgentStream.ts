@@ -36,6 +36,12 @@ export interface ToolEvent {
   finishedAt?: number;
 }
 
+export interface TodoItem {
+  id: string;
+  content: string;
+  status: "pending" | "in_progress" | "completed" | "cancelled";
+}
+
 export interface SystemEvent {
   id: string;
   type: "retry_start" | "validation_summary" | "retry_result" | "gate_passed" | "gate_blocked" | "repair_result";
@@ -91,6 +97,7 @@ export interface AgentStreamState {
   repairPlans: Array<RepairPlanEvent & { at: number }>;
   repairResults: Array<RepairResultEvent & { at: number }>;
   systemEvents: SystemEvent[];
+  todos: TodoItem[];
 }
 
 export interface SendPromptOptions {
@@ -242,6 +249,7 @@ const initialState: AgentStreamState = {
   repairPlans: [],
   repairResults: [],
   systemEvents: [],
+  todos: [],
 };
 
 export function useAgentStream() {
@@ -288,6 +296,7 @@ export function useAgentStream() {
       ...prev,
       messages: [...prev.messages, { id: nextMessageId(), role: "user", content: prompt }],
       thinkingText: "",
+      toolEvents: [],
       isStreaming: true,
       error: null,
       costUsd: null,
@@ -302,6 +311,7 @@ export function useAgentStream() {
       timingMetrics: [],
       repairPlans: [],
       repairResults: [],
+      systemEvents: [],
     }));
 
     try {
@@ -404,6 +414,25 @@ export function useAgentStream() {
 
             case "tool_start": {
               appendActivity(`→ ${event.tool}${event.input ? ` (${JSON.stringify(event.input).slice(0, 80)})` : ""}`);
+
+              if (event.tool === "TodoWrite") {
+                const inp = event.input as { todos?: TodoItem[]; merge?: boolean } | undefined;
+                if (inp?.todos && Array.isArray(inp.todos)) {
+                  setState((prev) => {
+                    if (inp.merge === false) {
+                      return { ...prev, todos: inp.todos as TodoItem[] };
+                    }
+                    const map = new Map(prev.todos.map((t) => [t.id, t]));
+                    for (const todo of inp.todos as TodoItem[]) {
+                      const existing = map.get(todo.id);
+                      map.set(todo.id, existing ? { ...existing, ...todo } : todo);
+                    }
+                    return { ...prev, todos: Array.from(map.values()) };
+                  });
+                }
+                break;
+              }
+
               const id = `tool-${toolCounterRef.current++}`;
               setState((prev) => ({
                 ...prev,
@@ -742,16 +771,16 @@ export function useAgentStream() {
               setState((prev) => {
                 const current = ensureRetryTelemetry(prev.retryTelemetry);
 
-                const diagnosticsByCategory = { ...current.diagnosticsByCategory };
+                const batchCounts: Record<string, number> = {};
                 for (const diagnostic of event.diagnostics) {
-                  diagnosticsByCategory[diagnostic.category] =
-                    (diagnosticsByCategory[diagnostic.category] ?? 0) + 1;
+                  batchCounts[diagnostic.category] =
+                    (batchCounts[diagnostic.category] ?? 0) + 1;
                 }
 
-                const sysEventDiagByCategory: Record<string, number> = {};
-                for (const diagnostic of event.diagnostics) {
-                  sysEventDiagByCategory[diagnostic.category] =
-                    (sysEventDiagByCategory[diagnostic.category] ?? 0) + 1;
+                const diagnosticsByCategory = { ...current.diagnosticsByCategory };
+                for (const [cat, count] of Object.entries(batchCounts)) {
+                  diagnosticsByCategory[cat] =
+                    (diagnosticsByCategory[cat] ?? 0) + count;
                 }
 
                 return {
@@ -765,7 +794,7 @@ export function useAgentStream() {
                       event.diagnostics[0]?.category ??
                       null,
                   },
-                  systemEvents: [...prev.systemEvents, { id: `sys-${systemEventCounterRef.current++}`, type: "validation_summary" as const, at: Date.now(), diagnosticsCount: event.diagnostics.length, diagnosticsByCategory: sysEventDiagByCategory }],
+                  systemEvents: [...prev.systemEvents, { id: `sys-${systemEventCounterRef.current++}`, type: "validation_summary" as const, at: Date.now(), diagnosticsCount: event.diagnostics.length, diagnosticsByCategory: batchCounts }],
                 };
               });
               break;

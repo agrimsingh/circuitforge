@@ -24,6 +24,10 @@ A 3-panel streaming interface that shows chat, live circuit preview, and activit
 - Auto-scroll to latest message
 - Markdown rendering for assistant text
 - Generated code blocks are stripped from chat and replaced by placeholders
+- **TodoQueue**: collapsible task list rendered from agent `TodoWrite` tool events
+  - Items show spinning indicator (in_progress), dot indicator (pending), or struck-through (completed/cancelled)
+  - Built on `Queue` primitives from `components/ai-elements/queue.tsx` (Radix Collapsible + ScrollArea)
+- **Post-validation summary**: final agent message includes human-readable blocking count, auto-fix count, advisory warnings, readiness score, and next-step guidance
 
 ### Circuit Panel (top-right)
 - Live `@tscircuit/runframe` preview

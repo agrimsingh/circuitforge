@@ -4,6 +4,16 @@
 
 CircuitForge is a conversational AI agent that designs electronic circuits from natural language. Users describe what they want, and the agent reasons like a senior electronics engineer — selecting real parts, generating tscircuit code, and producing manufacturable outputs.
 
+## Milestone Update (2026-02-17)
+
+- **Self-hosted tscircuit compiler**: Replaced external `compile.tscircuit.com` API and Vercel Sandbox compile pool with local `@tscircuit/eval` `CircuitRunner`. No more 90-second external timeout. Compilation runs in-process with no hard limit. Remote API retained as automatic fallback. New `lib/compile/local.ts` utility and `/api/compile` route for client-side export.
+- `.pnpmfile.cjs` hook ensures tscircuit ecosystem packages receive `zod@3` while `@anthropic-ai/claude-agent-sdk` keeps `zod@4`.
+- Post-validation summary: `buildPostValidationSummary()` appends a human-readable text block to the final agent message with blocking count, auto-fix count, warnings, readiness score, and next-step guidance.
+- Review findings now emitted **after** deterministic fixes so auto-fixed issues are excluded from the findings stream.
+- Agent todo queue: frontend intercepts `TodoWrite` tool_start events, merges todo items into stream state (`TodoItem[]`), and renders a collapsible `TodoQueue` component in chat with spinning/done indicators.
+- New `components/ai-elements/queue.tsx` Queue primitive library (Queue, QueueItem, QueueList, QueueSection, etc.) built on Radix Collapsible + ScrollArea.
+- Export readiness check uses `blockingDiagnosticsCount === 0` instead of `diagnosticsCount === 0` (advisory warnings no longer gate export).
+
 ## Milestone Update (2026-02-16)
 
 - Parallelized compile/validation pipeline: speculative compilation overlaps with LLM stream, post-compile KiCad analyses (connectivity, ERC, BOM) run concurrently via `Promise.all`.
@@ -37,7 +47,8 @@ Browser (Next.js)
 │   ├── Conversation → messages + initial suggestion chips
 │   ├── PromptInput → submit/stop and streaming mode
 │   ├── Reasoning + ChainOfThought strips for stream phase + thought logs
-│   └── Tool card stream within chat
+│   ├── Tool card stream within chat
+│   └── TodoQueue → collapsible task list from agent TodoWrite events
 ├── Circuit Panel (Artifact)
 │   ├── Artifact header actions (copy/export)
 │   └── Live RunFrame preview in WebPreview wrapper
@@ -68,13 +79,14 @@ Browser (Next.js)
     ├── Rolling error memory (in-memory fallback + Convex persistence)
     ├── Attempt orchestration (max retries + stagnation stop)
     ├── Speculative compilation (overlap with LLM stream)
-    ├── Compile validation (compile.tscircuit.com)
-    ├── Fetch timeouts (30s AbortSignal.timeout on compile API)
+    ├── Local compile via @tscircuit/eval CircuitRunner (no external timeout)
+    ├── Remote compile.tscircuit.com fallback (30s fetch timeout)
     ├── Parallel post-compile: KiCad analysis + tscircuit diagnostics via Promise.all
     ├── Parallel KiCad analyses: connectivity, ERC, BOM concurrently
     ├── PCB diagnostic extraction (`*_error` entries)
     ├── KiCad-backed review diagnostics (`lib/kicad/*`)
-    ├── Review finding events (`review_finding`, `review_decision`)
+    ├── Review finding events (`review_finding`, `review_decision`) — emitted after deterministic fixes
+    ├── Post-validation summary appended to final agent text
     ├── Retry prompt injection with structured diagnostics
     ├── SSE heartbeat (15s ping keepalive)
     └── Abort signal propagation (client disconnect → early exit)
@@ -88,10 +100,15 @@ Browser (Next.js)
     │   └── `formatSet.reviewBundle`: include kicad_report.json + connectivity.json
     ├── POST /api/manufacturing/jlcpcb-link (v1 stub payload)
 
+    Local Compilation (primary)
+    └── @tscircuit/eval CircuitRunner (lib/compile/local.ts)
+        ├── In-process tscircuit render — no external timeout
+        ├── Auto-detects export-default vs circuit.add() patterns
+        └── Falls back to remote compile.tscircuit.com API on error
+
     Optional Isolated Execution
     └── Vercel Sandbox SDK (@vercel/sandbox)
-        ├── Sandbox pool (warm instance reuse across attempts)
-        └── Ephemeral microVM for compile validation fallback
+        └── Ephemeral microVM for KiCad validation sandbox
 ```
 
 ## Tech Stack
@@ -115,11 +132,13 @@ Browser (Next.js)
 | `app/api/agent/` | SSE streaming endpoint + self-correction retry loop |
 | `app/api/export/` | Manufacturing export (BOM/Gerbers/PNP → zip) |
 | `app/api/kicad/` | KiCad validation endpoint |
+| `app/api/compile/` | Local tscircuit compilation route (client-side export) |
 | `app/api/manufacturing/` | Manufacturing connector payload route |
 | `app/api/sandbox/quickstart/` | Sandbox smoke-test endpoint (create VM, run command, teardown) |
 | `components/` | React UI components |
 | `convex/` | Convex schema + HTTP actions for persistent error memory |
 | `lib/agent/` | Agent config, prompts, code extraction, repair loop utilities |
+| `lib/compile/` | Local tscircuit compiler (`@tscircuit/eval` wrapper + remote fallback) |
 | `lib/kicad/` | KiCad bridge + converter + review helpers |
 | `lib/sandbox/` | Vercel Sandbox helpers for isolated execution |
 | `lib/stream/` | SSE event parsing and state management |
@@ -130,7 +149,7 @@ Browser (Next.js)
 1. User sends prompt → POST /api/agent
 2. Backend emits phase checkpoints for `requirements/architecture/implementation/review/export`
 3. Backend runs agent attempt #N, captures generated `tsx` code
-4. Backend validates generated code via compile API (sandbox-first, inline fallback)
+4. Backend validates generated code via local `@tscircuit/eval` (remote API fallback)
 4b. Speculative compile fires as soon as first code block is detected in the LLM stream, overlapping compilation with remaining generation
 5. Backend normalizes diagnostics from `circuit_json` entries and KiCad findings (run in parallel) and decides retry/stop
 7. Failed attempts are recorded in rolling error memory (in-memory and optional Convex persistence)
@@ -140,7 +159,7 @@ Browser (Next.js)
 11. Frontend parses SSE into split panels: chat (code blocks replaced with placeholder), artifact preview (RunFrame), and workflow (phase/tool/requirements/review)
 12. Frontend derives `phaseSteps` and `gateEvents` from stream events to drive chain-of-thought state and approval prompts without changing backend SSE contract
 13. RunFrame renders live schematic/PCB/3D preview in iframe via Artifact/WebPreview composition
-13. Export: client compiles via compile.tscircuit.com → server validates/converts to zip (+ optional KiCad bundle)
+13. Export: client compiles via `/api/compile` (local @tscircuit/eval) → server validates/converts to zip (+ optional KiCad bundle)
 14. Optional KiCad validation: `/api/kicad/validate` returns schema, findings, and connectivity metadata
 15. Sandbox setup validation: `/api/sandbox/quickstart` creates a microVM, executes a command, then tears down
 
@@ -161,7 +180,8 @@ Browser (Next.js)
 - Added `final_summary` for readiness evidence (intent, constraints, blockers, readiness score).
 - Added `timing_metric` for stage durations (guardrails fetch, agent attempt, compile/validate).
 - Added `repair_plan` and `repair_result` events for deterministic repair visibility.
-- Frontend now stores and renders these in `InfoPanel` and `CircuitPanel`.
+- Frontend intercepts `tool_start` for `TodoWrite` to extract and merge `TodoItem[]` into stream state.
+- Frontend now stores and renders these in `InfoPanel`, `CircuitPanel`, and `ChatPanel` (todo queue).
 
 ### Parallelization currently in use
 

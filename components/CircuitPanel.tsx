@@ -104,13 +104,9 @@ export function CircuitPanel({
   architecture = [],
 }: CircuitPanelProps) {
   const [copied, setCopied] = useState(false);
-  const [activeTab, setActiveTab] = useState<"circuit" | "architecture">("circuit");
-
-  useEffect(() => {
-    if (architecture.length > 0 && !code) {
-      setActiveTab("architecture");
-    }
-  }, [architecture.length, code]);
+  const [userTab, setUserTab] = useState<"circuit" | "architecture" | null>(null);
+  const activeTab =
+    userTab ?? (architecture.length > 0 && !code ? "architecture" : "circuit");
 
   const handleCopy = useCallback(async () => {
     try {
@@ -154,7 +150,7 @@ export function CircuitPanel({
 
         <div className="flex items-center gap-1 rounded-lg bg-surface p-0.5 border border-border/30">
           <button
-            onClick={() => setActiveTab("circuit")}
+            onClick={() => setUserTab("circuit")}
             className={`text-xs px-3 py-1 rounded-md transition-colors ${
               activeTab === "circuit"
                 ? "bg-accent/15 text-accent font-medium"
@@ -165,7 +161,7 @@ export function CircuitPanel({
           </button>
           {architecture.length > 0 && (
             <button
-              onClick={() => setActiveTab("architecture")}
+              onClick={() => setUserTab("architecture")}
               className={`text-xs px-3 py-1 rounded-md transition-colors ${
                 activeTab === "architecture"
                   ? "bg-accent/15 text-accent font-medium"

@@ -7,9 +7,8 @@ import { InfoPanel } from "@/components/InfoPanel";
 import { CircuitPanel } from "@/components/CircuitPanel";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo, useRef } from "react";
 import { PanelRightIcon } from "lucide-react";
-import { motion } from "motion/react";
 
 export default function Home() {
   const {
@@ -34,6 +33,7 @@ export default function Home() {
     timingMetrics,
     repairPlans,
     repairResults,
+    todos,
     sendPrompt,
     stop,
     setReviewDecision,
@@ -47,28 +47,37 @@ export default function Home() {
 
   const hasCode = Boolean(circuitCode) || architecture.length > 0;
 
-  const openCriticalFindings = reviewFindings.filter(
-    (finding) => finding.status === "open" && finding.severity === "critical",
-  ).length;
+  const openCriticalFindings = useMemo(
+    () => reviewFindings.filter(
+      (finding) => finding.status === "open" && finding.severity === "critical",
+    ).length,
+    [reviewFindings],
+  );
 
-  const openFindingsCount = reviewFindings.filter((f) => f.status === "open").length;
+  const openFindingsCount = useMemo(
+    () => reviewFindings.filter((f) => f.status === "open").length,
+    [reviewFindings],
+  );
 
-  const exportChecks = [
+  const exportChecks = useMemo(() => [
     { label: "Circuit code generated", passed: Boolean(circuitCode) },
     { label: "No open critical findings", passed: openCriticalFindings === 0 },
-    { label: "Validation clean", passed: finalSummary ? finalSummary.diagnosticsCount === 0 : false },
+    { label: "No blocking issues", passed: finalSummary ? finalSummary.blockingDiagnosticsCount === 0 : false },
     {
       label: "Readiness score >= 70",
       passed: finalSummary ? finalSummary.manufacturingReadinessScore >= 70 : false,
     },
-  ];
+  ], [circuitCode, openCriticalFindings, finalSummary]);
   const hasExportBlockers = exportChecks.some((item) => !item.passed);
+
+  const circuitCodeRef = useRef(circuitCode);
+  circuitCodeRef.current = circuitCode;
 
   const handleSend = useCallback(
     (prompt: string) => {
-      sendPrompt(prompt, circuitCode || undefined, { phase });
+      sendPrompt(prompt, circuitCodeRef.current || undefined, { phase });
     },
-    [sendPrompt, circuitCode, phase]
+    [sendPrompt, phase],
   );
 
   const performExport = useCallback(async (allowRiskyExport: boolean) => {
@@ -77,14 +86,11 @@ export default function Home() {
     setExportStage("compiling");
 
     try {
-      const compileRes = await fetch(
-        "https://compile.tscircuit.com/api/compile",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ fs_map: { "main.tsx": circuitCode } }),
-        }
-      );
+      const compileRes = await fetch("/api/compile", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fs_map: { "main.tsx": circuitCode } }),
+      });
       if (!compileRes.ok) throw new Error(`Compile failed: ${compileRes.status}`);
       const { circuit_json } = await compileRes.json();
 
@@ -172,10 +178,9 @@ export default function Home() {
           </span>
           {isStreaming && phaseProgress > 0 && (
             <div className="w-16 h-1 rounded-full bg-border/40 overflow-hidden">
-              <motion.div
-                className="h-full bg-accent/60 rounded-full"
-                animate={{ width: `${phaseProgress}%` }}
-                transition={{ type: "spring", damping: 25, stiffness: 200 }}
+              <div
+                className="h-full bg-accent/60 rounded-full transition-[width] duration-500 ease-out"
+                style={{ width: `${phaseProgress}%` }}
               />
             </div>
           )}
@@ -220,6 +225,7 @@ export default function Home() {
               messages={messages}
               thinkingText={thinkingText}
               toolEvents={toolEvents}
+              todos={todos}
               phaseSteps={phaseSteps}
               gateEvents={gateEvents}
               isStreaming={isStreaming}
@@ -239,6 +245,7 @@ export default function Home() {
                   messages={messages}
                   thinkingText={thinkingText}
                   toolEvents={toolEvents}
+                  todos={todos}
                   phaseSteps={phaseSteps}
                   gateEvents={gateEvents}
                   isStreaming={isStreaming}

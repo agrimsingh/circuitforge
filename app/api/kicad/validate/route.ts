@@ -36,7 +36,7 @@ export async function POST(req: Request) {
     const compileResult = await compileForValidation(tscircuitCode);
     if (!compileResult.ok || !compileResult.circuitJson) {
       compileError =
-        compileResult.errorMessage ?? `Compile failed with status ${compileResult.status}`;
+        compileResult.errorMessage ?? "Compile failed";
       return new Response(
         JSON.stringify({
           ok: false,

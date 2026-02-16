@@ -52,7 +52,8 @@
 - [x] Preventive routing guardrails for recurring trace/via DRC failures
 - [x] Adaptive error memory for recurring failure classes (rolling prompt guardrails)
 - [x] Convex-backed persistent error memory (with in-memory fallback)
-- [x] Parallelized validation pipeline (speculative compile, parallel KiCad analyses, sandbox pool)
+- [x] Parallelized validation pipeline (speculative compile, parallel KiCad analyses)
+- [x] Self-hosted tscircuit compiler (`@tscircuit/eval` CircuitRunner, no external 90s timeout)
 - [x] SSE heartbeat + abort signal propagation for reliability
 - [x] SDK lifecycle cleanup (AbortController + explicit `close?.()`)
 - [x] Fetch timeouts on compile API calls
@@ -66,6 +67,11 @@
 - [x] Tightened active-pin classification for `kicad_unconnected_pin` routing
 - [x] Added live smoke `PIN_CONFLICT_WARNING` probe coverage
 - [x] Added fixture-backed live smoke prompt sets (`__tests__/fixtures/live-smoke-prompts.json`) with strict prompt-set validation
+- [x] Post-validation summary appended to agent final text (`buildPostValidationSummary`)
+- [x] Agent todo queue UI (TodoQueue component + Queue primitives in `components/ai-elements/queue.tsx`)
+- [x] Stream-side `TodoItem` state derived from `TodoWrite` tool_start events
+- [x] Export readiness check uses `blockingDiagnosticsCount` (advisory warnings no longer block export)
+- [x] Review findings emitted after deterministic fixes (auto-fixed issues excluded)
 - [ ] Loading states and animations
 - [x] Mobile-responsive considerations
 - [ ] React component tests (Testing Library)

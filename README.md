@@ -1,31 +1,56 @@
 # CircuitForge
 
-AI-powered conversational circuit designer. Natural language to manufacturable PCB.
+A circuit design agent that catches its own mistakes, fixes them before you see them, and never makes the same one twice.
 
-## What It Does
+## The Problem
 
-- Streams an agentic circuit-design workflow (`/api/agent`) from Claude Agent SDK.
-- Generates `tscircuit` code and renders live preview in the browser.
-- Supports a 5-phase orchestration flow:
-  - requirements
-  - architecture
-  - implementation
-  - review
-  - export
-- Runs KiCad-backed review with `circuit-json-to-kicad` + `kicad-sch-ts`.
-- Exports manufacturing artifacts with optional KiCad bundles (`kicad_sch`, `kicad_report.json`, `connectivity.json`).
-- Applies surgical schematic edits with MCP-backed KiCad operations (`manage_component`, `manage_wire`).
-- Runs self-correction loop for compile/PCB diagnostics.
-- Learns recurring failure patterns with in-memory + optional Convex persistence.
+AI-generated circuits don't work on the first try. Nets are miswired, footprints are wrong, vias violate clearance rules, BOM fields are missing. Every existing tool leaves you to debug this yourself. The workflow becomes: generate, export, open in KiCad, find 30 errors, go back, re-prompt, repeat. You're the error-correction loop.
+
+## What CircuitForge Does Differently
+
+CircuitForge is a self-correcting, self-improving circuit design agent. You describe what you want in plain language. It designs, validates, and fixes the circuit autonomously -- then exports manufacturing-ready files.
+
+**The core loop:**
+
+1. **Generate** -- A multi-model agent pipeline (Claude Opus orchestrates; Sonnet writes tscircuit code; Haiku scouts real JLCPCB parts) produces a circuit from your description.
+
+2. **Validate** -- tscircuit compilation and KiCad analysis (connectivity, ERC, BOM audit) run in parallel against every generation. Not after you export. Every time.
+
+3. **Classify & Repair** -- Every diagnostic is bucketed as `auto_fixable`, `should_demote`, or `must_repair`. The agent makes deterministic decisions about what to retry, what to degrade gracefully, and what needs a fundamentally different approach. Up to 3 bounded attempts with stagnation detection.
+
+4. **Remember** -- Failure patterns are scored with exponential weighted moving averages and promoted into pre-generation guardrails. The next time you (or anyone on your deployment) designs a circuit, the agent already knows "don't place different-net vias within 0.2mm" because it learned that the hard way last Tuesday.
+
+The result: you get a validated, manufacturable circuit -- not a first draft you have to babysit.
+
+### Built on the Claude Agent SDK
+
+The orchestration layer runs on the [Anthropic Agent SDK](https://docs.anthropic.com/en/docs/agents/agent-sdk) -- not as a thin wrapper, but using the full primitives:
+
+- **Multi-model sub-agents** -- Four specialist agents are defined as SDK `AgentDefinition` objects, each pinned to the right model for its job. Opus orchestrates and reviews. Sonnet writes tscircuit code. Haiku scouts parts from JLCPCB inventory. The orchestrator delegates to them by context, not hardcoded sequence.
+- **MCP tool servers** -- External capabilities (JLCPCB parts search, web fetch) are exposed through `createSdkMcpServer()` so the agent invokes them as native tool calls with Zod-validated schemas.
+- **Streaming hooks** -- `PreToolUse`, `PostToolUse`, `SubagentStart`, `SubagentStop` hooks emit SSE events in real time, powering the chain-of-thought UI, tool timeline, and sub-agent activity indicators without polling.
+- **Adaptive thinking** -- The orchestrator runs with `thinking: { type: "adaptive" }`, so reasoning depth scales with problem complexity. Simple tweaks get fast responses; tricky electrical issues get deep deliberation.
+- **Speculative compilation** -- Code blocks are detected mid-stream and compiled locally via `@tscircuit/eval` before the agent finishes its turn, overlapping validation with generation. No external API timeout limits.
+
+The retry loop sits outside the SDK query boundary: each attempt is a fresh `query()` call with an augmented prompt containing the previous code, diagnostics, and adaptive guardrails. Compilation runs locally via `@tscircuit/eval` with no external timeout — the 90-second hard limit from the remote compile API is eliminated. Abort propagation flows through the SDK's `AbortController` so cancelling a session tears down the active agent turn, any running sub-agents, and in-flight compilations cleanly.
+
+**What ships with it:**
+
+- Five-phase conversational workflow: requirements → architecture → implementation → review → export
+- Live schematic/PCB/3D preview in the browser as the agent works
+- AI-native UI with chain-of-thought reasoning, todo queue, and review findings you can accept or dismiss
+- Manufacturing export: Gerber, Excellon drill, BOM CSV, Pick & Place CSV, optional KiCad bundle
+- Real parts from JLCPCB inventory, not placeholder values
+- Adaptive error memory (in-memory by default, optional Convex persistence across deploys)
 
 ## Tech Stack
 
 - Next.js (App Router, Node runtime routes)
 - TypeScript strict mode
 - Anthropic Claude Agent SDK
-- tscircuit + compile API
+- tscircuit + `@tscircuit/eval` (local compilation, no external timeout)
 - circuit-json-to-kicad + kicad-sch-ts
-- Vercel Sandbox (optional isolated compile validation)
+- Vercel Sandbox (optional isolated execution for KiCad validation)
 - Convex (optional persistent self-learning memory)
 
 ## Quick Start
@@ -124,6 +149,7 @@ The smoke run now fails fast if the selected prompt set is missing or invalid.
 ## API Surface
 
 - `POST /api/agent` - streaming phase-aware orchestration endpoint
+- `POST /api/compile` - local tscircuit compilation (`@tscircuit/eval`, remote fallback)
 - `POST /api/kicad/validate` - compile/convert + KiCad validation + report artifacts
 - `POST /api/kicad/edit` - apply MCP-style KiCad operations to a schematic
 - `POST /api/export` - manufacturing zip export with optional KiCad review bundle

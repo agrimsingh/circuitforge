@@ -3,7 +3,7 @@
 | Spec | Status | Verified | Description |
 |------|--------|----------|-------------|
 | [agent-backend](./agent-backend.md) | Implemented | Yes (2026-02-13) | Agent SDK integration, SSE streaming, retry loop, adaptive memory |
-| [frontend-ui](./frontend-ui.md) | Implemented | Yes (2026-02-13) | 3-panel UI with live preview and retry telemetry |
+| [frontend-ui](./frontend-ui.md) | Implemented | Partial (2026-02-17) | 3-panel UI with live preview, retry telemetry, todo queue, and post-validation summary |
 | [parts-search](./parts-search.md) | Implemented | Partial (2026-02-13) | JLCPCB parts search via jlcsearch API |
 | [export](./export.md) | In Progress | Partial (2026-02-13) | Circuit JSON → manufacturing files with optional KiCad/review bundle output |
 | [five-phase-workflow](./five-phase-workflow.md) | In Progress | Partial (2026-02-13) | Phase contracts, visible phase timeline, checkpoints, and review decisions |

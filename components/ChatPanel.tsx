@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback } from "react";
+import { useCallback, memo } from "react";
 import { Conversation, ConversationContent, ConversationEmptyState } from "@/components/ai-elements/conversation";
 import { Message, MessageContent, MessageResponse } from "@/components/ai-elements/message";
 import {
@@ -14,9 +14,18 @@ import {
   ChainOfThoughtContent,
   ChainOfThoughtStep,
 } from "@/components/ai-elements/chain-of-thought";
-import type { AgentMessage } from "@/lib/stream/useAgentStream";
-import type { ToolEvent } from "@/lib/stream/useAgentStream";
+import type { AgentMessage, ToolEvent, TodoItem } from "@/lib/stream/useAgentStream";
 import type { PhaseStepState, GateEvent } from "@/lib/stream/types";
+import {
+  Queue,
+  QueueItem,
+  QueueItemContent,
+  QueueItemIndicator,
+  QueueSection,
+  QueueSectionContent,
+  QueueSectionLabel,
+  QueueSectionTrigger,
+} from "@/components/ai-elements/queue";
 import {
   ChevronRightIcon,
   CpuIcon,
@@ -26,12 +35,14 @@ import {
   AlertTriangleIcon,
   ZapIcon,
   CircleDotIcon,
+  ListChecksIcon,
 } from "lucide-react";
 
 type ChatPanelProps = {
   messages: AgentMessage[];
   thinkingText: string;
   toolEvents: ToolEvent[];
+  todos: TodoItem[];
   isStreaming: boolean;
   phaseSteps?: PhaseStepState[];
   gateEvents?: GateEvent[];
@@ -69,6 +80,47 @@ type ChatPanelProps = {
   onStop: () => void;
 };
 
+const listChecksIcon = <ListChecksIcon className="size-4" />;
+
+const TodoQueue = memo(function TodoQueue({ todos }: { todos: TodoItem[] }) {
+  if (todos.length === 0) return null;
+  return (
+    <Queue className="mx-1">
+      <QueueSection defaultOpen>
+        <QueueSectionTrigger>
+          <QueueSectionLabel
+            label={`task${todos.length !== 1 ? "s" : ""}`}
+            count={todos.length}
+            icon={listChecksIcon}
+          />
+        </QueueSectionTrigger>
+        <QueueSectionContent>
+          <ul className="mt-2 -mb-1">
+            {todos.map((todo) => {
+              const done =
+                todo.status === "completed" || todo.status === "cancelled";
+              return (
+                <QueueItem key={todo.id}>
+                  <div className="flex items-start gap-2">
+                    {todo.status === "in_progress" ? (
+                      <span className="mt-0.5 inline-block size-2.5 rounded-full border-2 border-accent/50 border-t-accent animate-spin" />
+                    ) : (
+                      <QueueItemIndicator completed={done} />
+                    )}
+                    <QueueItemContent completed={done}>
+                      {todo.content}
+                    </QueueItemContent>
+                  </div>
+                </QueueItem>
+              );
+            })}
+          </ul>
+        </QueueSectionContent>
+      </QueueSection>
+    </Queue>
+  );
+});
+
 const starterPrompts = [
   "Design a low-power ESP32-based temperature monitor with OLED display",
   "Create a USB-powered STM32 dev board with SWD header and status LEDs",
@@ -87,7 +139,22 @@ type CoTStep = {
   at: number;
 };
 
-function humanizeToolName(tool: string, input?: unknown): string {
+const INTERNAL_TOOLS = new Set([
+  "Grep",
+  "Read",
+  "Glob",
+  "Write",
+  "StrReplace",
+  "SemanticSearch",
+  "ReadLints",
+  "Shell",
+  "Delete",
+  "EditNotebook",
+  "TodoWrite",
+]);
+
+function humanizeToolName(tool: string, input?: unknown): string | null {
+  if (INTERNAL_TOOLS.has(tool)) return null;
   const inp = input as Record<string, unknown> | undefined;
   if (tool.includes("search_parts"))
     return `Searching parts${inp?.q ? `: ${inp.q}` : ""}`;
@@ -110,10 +177,12 @@ function humanizeToolName(tool: string, input?: unknown): string {
   return tool.replace(/^mcp_[^_]+__/, "").replace(/_/g, " ");
 }
 
-function toolEventToStep(ev: ToolEvent): CoTStep {
+function toolEventToStep(ev: ToolEvent): CoTStep | null {
+  const label = humanizeToolName(ev.tool, ev.input);
+  if (label === null) return null;
   return {
     id: ev.id,
-    label: humanizeToolName(ev.tool, ev.input),
+    label,
     description: ev.finishedAt
       ? `${((ev.finishedAt - ev.startedAt) / 1000).toFixed(1)}s`
       : undefined,
@@ -216,6 +285,7 @@ export function ChatPanel({
   messages,
   thinkingText,
   toolEvents,
+  todos,
   isStreaming,
   phaseMessage,
   phaseProgress,
@@ -280,11 +350,15 @@ export function ChatPanel({
                 (systemEvents && systemEvents.length > 0)) &&
                 (() => {
                   const steps: CoTStep[] = [
-                    ...toolEvents.map(toolEventToStep),
+                    ...toolEvents
+                      .map(toolEventToStep)
+                      .filter((s): s is CoTStep => s !== null),
                     ...(systemEvents ?? [])
                       .map(systemEventToStep)
                       .filter((s): s is CoTStep => s !== null),
                   ].sort((a, b) => a.at - b.at);
+
+                  if (steps.length === 0) return null;
 
                   return (
                     <ChainOfThought
@@ -314,6 +388,8 @@ export function ChatPanel({
                     </ChainOfThought>
                   );
                 })()}
+
+              <TodoQueue todos={todos} />
             </>
           )}
         </ConversationContent>
