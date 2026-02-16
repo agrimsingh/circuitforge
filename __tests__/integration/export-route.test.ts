@@ -1,7 +1,18 @@
-import { describe, it, expect } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { POST } from "@/app/api/export/route";
 import JSZip from "jszip";
 import simpleCircuit from "../fixtures/simple-circuit.json";
+
+const compileForValidationMock = vi.fn();
+
+vi.mock("@/lib/agent/repairLoop", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/agent/repairLoop")>();
+  return {
+    ...actual,
+    compileForValidation: (...args: Parameters<typeof compileForValidationMock>) =>
+      compileForValidationMock(...args),
+  };
+});
 
 function makeRequest(body: unknown): Request {
   return new Request("http://localhost/api/export", {
@@ -20,6 +31,16 @@ function makeRawRequest(raw: string): Request {
 }
 
 describe("Export route — validation", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    compileForValidationMock.mockResolvedValue({
+      ok: true,
+      source: "mock",
+      circuitJson: simpleCircuit,
+      errorMessage: null,
+    });
+  });
+
   it("returns 400 for invalid JSON body", async () => {
     const res = await POST(makeRawRequest("{not valid json!!!}"));
     expect(res.status).toBe(400);
@@ -27,7 +48,7 @@ describe("Export route — validation", () => {
     expect(body.error).toBeDefined();
   });
 
-  it("returns 400 when circuit_json is missing", async () => {
+  it("returns 400 when both circuit_json and tscircuit_code are missing", async () => {
     const res = await POST(makeRequest({}));
     expect(res.status).toBe(400);
     const body = await res.json();
@@ -52,6 +73,16 @@ describe("Export route — validation", () => {
     expect(res.status).toBe(409);
     const body = await res.json();
     expect(body.error).toContain("critical findings");
+  });
+
+  it("accepts tscircuit_code and compiles internally", async () => {
+    const res = await POST(
+      makeRequest({
+        tscircuit_code: "export default () => <board />",
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(compileForValidationMock).toHaveBeenCalledTimes(1);
   });
 });
 

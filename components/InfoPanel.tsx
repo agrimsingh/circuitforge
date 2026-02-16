@@ -63,9 +63,15 @@ function toolStateFromEvent(status: ToolEvent["status"]) {
   return status === "running" ? "input-streaming" : "output-available";
 }
 
-function phaseClass(phase: DesignPhase) {
-  const normalized = phase.toUpperCase();
-  return normalized.slice(0, 1) + normalized.slice(1);
+function normalizeToolFamily(tool: string): string {
+  if (tool.startsWith("Subagent: ")) {
+    return `Subagent · ${tool.replace("Subagent: ", "")}`;
+  }
+  if (tool.includes("search_parts")) return "Parts search";
+  if (tool.includes("WebSearch") || tool === "WebSearch") return "Web search";
+  if (tool.includes("WebFetch") || tool === "WebFetch") return "Web fetch";
+  if (tool.includes("Task") || tool === "Task") return "Task delegation";
+  return tool;
 }
 
 function normalizeStatus(
@@ -126,6 +132,7 @@ export function InfoPanel({
   onReviewDecision,
   onSend,
 }: InfoPanelProps) {
+  const [showRawToolCalls, setShowRawToolCalls] = useState(false);
   const [findingFilter, setFindingFilter] = useState<"all" | "critical" | "warning" | "info">(
     "all",
   );
@@ -149,6 +156,44 @@ export function InfoPanel({
   const latestRepairPlan = repairPlans.length > 0 ? repairPlans[repairPlans.length - 1] : null;
   const latestRepairResult = repairResults.length > 0 ? repairResults[repairResults.length - 1] : null;
   const recentRepairResults = repairResults.slice(-6).reverse();
+  const toolSummary = useMemo(() => {
+    const grouped = new Map<
+      string,
+      {
+        label: string;
+        total: number;
+        running: number;
+        done: number;
+        totalDurationMs: number;
+        measuredCount: number;
+        lastAt: number;
+      }
+    >();
+
+    for (const event of toolEvents) {
+      const label = normalizeToolFamily(event.tool);
+      const entry = grouped.get(label) ?? {
+        label,
+        total: 0,
+        running: 0,
+        done: 0,
+        totalDurationMs: 0,
+        measuredCount: 0,
+        lastAt: event.startedAt,
+      };
+      entry.total += 1;
+      if (event.status === "running") entry.running += 1;
+      else entry.done += 1;
+      if (event.finishedAt && event.finishedAt >= event.startedAt) {
+        entry.totalDurationMs += event.finishedAt - event.startedAt;
+        entry.measuredCount += 1;
+      }
+      entry.lastAt = Math.max(entry.lastAt, event.finishedAt ?? event.startedAt);
+      grouped.set(label, entry);
+    }
+
+    return Array.from(grouped.values()).sort((a, b) => b.lastAt - a.lastAt);
+  }, [toolEvents]);
 
   const steps =
     phaseSteps && phaseSteps.length > 0
@@ -161,10 +206,13 @@ export function InfoPanel({
   useEffect(() => {
     const passedCount = gateEvents?.filter(e => e.status === "passed").length ?? 0;
     if (passedCount > prevGateCountRef.current) {
-      setGateFlash(true);
+      const startFlash = setTimeout(() => setGateFlash(true), 0);
       const timer = setTimeout(() => setGateFlash(false), 600);
       prevGateCountRef.current = passedCount;
-      return () => clearTimeout(timer);
+      return () => {
+        clearTimeout(startFlash);
+        clearTimeout(timer);
+      };
     }
     prevGateCountRef.current = passedCount;
   }, [gateEvents]);
@@ -337,27 +385,61 @@ export function InfoPanel({
           <section className="space-y-2">
             <h4 className="text-xs font-medium text-muted-foreground flex items-center gap-2">
               <span className="inline-block w-0.5 h-3 rounded-full bg-accent/30" />
-              Tools
+              Pipeline activity
             </h4>
-            <div className="space-y-2">
-              {toolEvents.map((event) => (
-                <Tool key={event.id}>
-                  <ToolHeader
-                    title={event.tool}
-                    type="dynamic-tool"
-                    toolName={event.tool}
-                    state={toolStateFromEvent(event.status)}
-                  />
-                  <ToolContent>
-                    <ToolInput input={event.input ?? { note: "No input" }} />
-                    <ToolOutput
-                      output={event.output ?? (event.status === "running" ? "Running…" : "No output")}
-                      errorText={undefined}
-                    />
-                  </ToolContent>
-                </Tool>
+            <div className="space-y-2 rounded-md border border-border p-2">
+              {toolSummary.map((summary) => (
+                <div
+                  key={summary.label}
+                  className="flex items-center justify-between rounded border border-border/60 bg-surface-raised/40 px-2 py-1.5 text-xs"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate font-medium text-foreground">{summary.label}</p>
+                    <p className="text-[11px] text-muted-foreground">
+                      {summary.total} call{summary.total === 1 ? "" : "s"} · done {summary.done}
+                      {summary.running > 0 ? ` · running ${summary.running}` : ""}
+                    </p>
+                  </div>
+                  <span className="ml-2 text-[11px] text-info">
+                    {summary.measuredCount > 0
+                      ? `${Math.round(summary.totalDurationMs / summary.measuredCount)}ms avg`
+                      : "pending"}
+                  </span>
+                </div>
               ))}
+              <div className="pt-1">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 px-2 text-[10px]"
+                  onClick={() => setShowRawToolCalls((prev) => !prev)}
+                >
+                  {showRawToolCalls ? "Hide raw tool calls" : "View raw tool calls"}
+                </Button>
+              </div>
             </div>
+
+            {showRawToolCalls && (
+              <div className="space-y-2">
+                {toolEvents.map((event) => (
+                  <Tool key={event.id}>
+                    <ToolHeader
+                      title={event.tool}
+                      type="dynamic-tool"
+                      toolName={event.tool}
+                      state={toolStateFromEvent(event.status)}
+                    />
+                    <ToolContent>
+                      <ToolInput input={event.input ?? { note: "No input" }} />
+                      <ToolOutput
+                        output={event.output ?? (event.status === "running" ? "Running…" : "No output")}
+                        errorText={undefined}
+                      />
+                    </ToolContent>
+                  </Tool>
+                ))}
+              </div>
+            )}
           </section>
         )}
 

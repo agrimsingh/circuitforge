@@ -278,7 +278,7 @@ If all checks are reasonable, say no blockers and keep recommendations minimal.
 export const PHASE_SUBAGENTS: Record<DesignPhase, string[]> = {
   requirements: ["parts-scout"],
   architecture: ["parts-scout"],
-  implementation: ["code-writer", "validator"],
+  implementation: ["parts-scout", "code-writer", "validator"],
   review: ["kicad-reviewer", "validator"],
   export: ["kicad-reviewer"],
 };
@@ -290,4 +290,36 @@ export function buildPhaseSubagentHints(activePhase: DesignPhase, findings: Revi
   }
 
   return Array.from(new Set([...base, ...findings.map(() => "kicad-reviewer")])) as string[];
+}
+
+export function resolvePhaseSubagentNames(activePhase: DesignPhase, findings: ReviewFinding[] = []): string[] {
+  return buildPhaseSubagentHints(activePhase, findings);
+}
+
+export function resolvePhaseSubagents(activePhase: DesignPhase, findings: ReviewFinding[] = []) {
+  const names = resolvePhaseSubagentNames(activePhase, findings);
+  const scoped = Object.fromEntries(
+    Object.entries(subagents).filter(([name]) => names.includes(name)),
+  ) as Record<string, AgentDefinition>;
+  return scoped;
+}
+
+export function resolveAllowedToolsForPhase(activePhase: DesignPhase, findings: ReviewFinding[] = []): string[] {
+  const names = new Set(resolvePhaseSubagentNames(activePhase, findings));
+  const tools = new Set<string>();
+
+  if (names.size > 0) {
+    tools.add("Task");
+  }
+
+  if (names.has("parts-scout")) {
+    tools.add("WebSearch");
+    tools.add("mcp__circuitforge-tools__search_parts");
+  }
+
+  if (names.has("code-writer") || names.has("kicad-reviewer")) {
+    tools.add("WebFetch");
+  }
+
+  return Array.from(tools);
 }

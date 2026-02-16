@@ -40,7 +40,7 @@ export default function Home() {
     systemEvents,
   } = useAgentStream();
   const [isExporting, setIsExporting] = useState(false);
-  const [exportStage, setExportStage] = useState<"compiling" | "packaging" | "downloading" | null>(null);
+  const [exportStage, setExportStage] = useState<"packaging" | "downloading" | null>(null);
   const [showDrawer, setShowDrawer] = useState(false);
   const [notification, setNotification] = useState<string | null>(null);
   const [showExportChecklist, setShowExportChecklist] = useState(false);
@@ -83,24 +83,14 @@ export default function Home() {
   const performExport = useCallback(async (allowRiskyExport: boolean) => {
     if (!circuitCode) return;
     setIsExporting(true);
-    setExportStage("compiling");
+    setExportStage("packaging");
 
     try {
-      const compileRes = await fetch("/api/compile", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fs_map: { "main.tsx": circuitCode } }),
-      });
-      if (!compileRes.ok) throw new Error(`Compile failed: ${compileRes.status}`);
-      const { circuit_json } = await compileRes.json();
-
-      setExportStage("packaging");
-
       const exportRes = await fetch("/api/export", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          circuit_json,
+          tscircuit_code: circuitCode,
           formatSet: { kicad: true, reviewBundle: true },
           readiness: {
             criticalFindingsCount: openCriticalFindings,

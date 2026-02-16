@@ -363,7 +363,7 @@ export function ChatPanel({
                   return (
                     <ChainOfThought
                       defaultOpen={isStreaming}
-                      open={isStreaming ? true : undefined}
+                      open={isStreaming}
                     >
                       <ChainOfThoughtHeader>
                         {isStreaming

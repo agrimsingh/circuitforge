@@ -72,6 +72,17 @@
 - [x] Stream-side `TodoItem` state derived from `TodoWrite` tool_start events
 - [x] Export readiness check uses `blockingDiagnosticsCount` (advisory warnings no longer block export)
 - [x] Review findings emitted after deterministic fixes (auto-fixed issues excluded)
+- [x] Review findings lifecycle sync: emit auto-closure decisions for resolved findings and preserve accepted/dismissed status on stream upserts
+- [x] Chat progress narration: stream concise state/next-step updates into the conversation during retries/validation
+- [x] End-of-run chat recap: always append assistant summary with current state, fixes made, and suggested follow-up prompts
+- [x] Remove duplicate deterministic revalidation compile pass in retry loop
+- [x] Lazy-load adaptive guardrails only when retry prompt is needed
+- [x] Phase-scope allowed tools/subagents in `/api/agent`
+- [x] Add `callId` correlation for `tool_start`/`tool_result` SSE events
+- [x] Tighten speculative compile trigger to complete TSX fence extraction
+- [x] Switch export UX to single `/api/export` call using `tscircuit_code`
+- [x] Parallelize independent export artifact generation tasks
+- [x] Declutter InfoPanel tool section (grouped pipeline summary + raw drill-down)
 - [ ] Loading states and animations
 - [x] Mobile-responsive considerations
 - [ ] React component tests (Testing Library)

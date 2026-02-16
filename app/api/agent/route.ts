@@ -5,6 +5,7 @@ import type {
   SubagentStartHookInput,
   SubagentStopHookInput,
   HookJSONOutput,
+  AgentDefinition,
 } from "@anthropic-ai/claude-agent-sdk";
 import { MODELS } from "@/lib/agent/models";
 import {
@@ -14,7 +15,10 @@ import {
   architectureFromRequirements,
 } from "@/lib/agent/prompt";
 import { circuitforgeTools } from "@/lib/agent/tools";
-import { subagents } from "@/lib/agent/subagents";
+import {
+  resolveAllowedToolsForPhase,
+  resolvePhaseSubagents,
+} from "@/lib/agent/subagents";
 import { extractCodeFromText } from "@/lib/agent/code";
 import {
   compileAndValidateWithKicad,
@@ -411,6 +415,24 @@ function closeResolvedFindingsForPhase(
   });
 }
 
+function emitResolvedReviewDecisions(params: {
+  before: ReviewFinding[];
+  after: ReviewFinding[];
+  emit: (event: SSEEvent) => void;
+}) {
+  const beforeById = new Map(params.before.map((finding) => [finding.id, finding]));
+  for (const finding of params.after) {
+    const prior = beforeById.get(finding.id);
+    if (!prior) continue;
+    if (prior.status === "open" && finding.status === "dismissed") {
+      params.emit({
+        type: "review_decision",
+        decision: { findingId: finding.id, decision: "dismiss" },
+      });
+    }
+  }
+}
+
 function makeReviewId(phase: DesignPhase, entry: ValidationDiagnostic) {
   const source = entry.source ?? "tscircuit";
   const signature = entry.signature ? entry.signature.replaceAll(":", "-") : entry.category;
@@ -444,6 +466,16 @@ function toReviewFindings(
     source: diagnostic.source,
     createdAt: Date.now(),
   }));
+}
+
+function resolveFindingFamily(finding: ReviewFinding): string {
+  return inferDiagnosticFamily({
+    category: finding.category,
+    message: finding.message,
+    severity: finding.severity === "critical" ? 9 : finding.severity === "warning" ? 6 : 4,
+    signature: finding.id,
+    source: finding.source,
+  });
 }
 
 function inferDefaultPhase(prompt: string, hasHistory: boolean): DesignPhase {
@@ -946,11 +978,17 @@ interface SpeculativeCompileHandle {
   promise: Promise<Awaited<ReturnType<typeof compileAndValidateWithKicad>>>;
 }
 
+function hasCompleteTsxFence(text: string): boolean {
+  return /```tsx[\s\S]*```/.test(text);
+}
+
 async function runAgentAttempt(params: {
   prompt: string;
   apiKey: string;
   controller: ReadableStreamDefaultController<Uint8Array>;
   encoder: TextEncoder;
+  allowedTools: string[];
+  scopedAgents: Record<string, AgentDefinition>;
   signal?: AbortSignal;
   attempt?: number;
   enableSpeculativeCompile?: boolean;
@@ -986,22 +1024,24 @@ async function runAgentAttempt(params: {
       permissionMode: "bypassPermissions",
       allowDangerouslySkipPermissions: true,
       abortController: sdkAbort,
-      allowedTools: [
-        "WebFetch",
-        "WebSearch",
-        "Task",
-        "mcp__circuitforge-tools__search_parts",
-      ],
+      allowedTools: params.allowedTools,
       mcpServers: { "circuitforge-tools": circuitforgeTools },
-      agents: subagents,
+      agents: params.scopedAgents,
       maxTurns: 20,
       env: { ...process.env, ANTHROPIC_API_KEY: params.apiKey },
       hooks: {
         PreToolUse: [{
           hooks: [async (input): Promise<HookJSONOutput> => {
             const h = input as PreToolUseHookInput;
+            const hRecord = h as Record<string, unknown>;
             safeEnqueue({
               type: "tool_start",
+              callId:
+                typeof hRecord.tool_use_id === "string"
+                  ? hRecord.tool_use_id
+                  : typeof hRecord.id === "string"
+                    ? hRecord.id
+                    : undefined,
               tool: h.tool_name,
               input: h.tool_input,
             });
@@ -1011,8 +1051,15 @@ async function runAgentAttempt(params: {
         PostToolUse: [{
           hooks: [async (input): Promise<HookJSONOutput> => {
             const h = input as PostToolUseHookInput;
+            const hRecord = h as Record<string, unknown>;
             safeEnqueue({
               type: "tool_result",
+              callId:
+                typeof hRecord.tool_use_id === "string"
+                  ? hRecord.tool_use_id
+                  : typeof hRecord.id === "string"
+                    ? hRecord.id
+                    : undefined,
               tool: h.tool_name,
               output: h.tool_response,
             });
@@ -1069,7 +1116,7 @@ async function runAgentAttempt(params: {
 
             if (params.enableSpeculativeCompile && !speculativeCompile) {
               const code = extractCodeFromText(fullText);
-              if (code && code.length > 50) {
+              if (code && code.length > 50 && hasCompleteTsxFence(fullText)) {
                 speculativeCompile = {
                   code,
                   promise: compileAndValidateWithKicad(code, params.signal),
@@ -1137,7 +1184,6 @@ export async function POST(req: Request) {
     inferDefaultPhase(body.prompt, sessionContext.requirements.length > 0 && sessionContext.architecture.length > 0);
 
   const encoder = new TextEncoder();
-  const guardrailsPromise = getAdaptiveGuardrailsPersistent();
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -1289,13 +1335,19 @@ export async function POST(req: Request) {
                 ),
                 emit,
               });
-              sessionContext.reviewFindings = closeResolvedFindingsForPhase(
+              const beforeClose = sessionContext.reviewFindings;
+              const closedResolved = closeResolvedFindingsForPhase(
                 sessionContext.reviewFindings,
                 selectedPhase,
                 new Set(baselineFindings.map((finding) => finding.id)),
               );
+              emitResolvedReviewDecisions({
+                before: beforeClose,
+                after: closedResolved,
+                emit,
+              });
               sessionContext.reviewFindings = mergeReviewFindings(
-                sessionContext.reviewFindings,
+                closedResolved,
                 baselineFindings,
               );
             }
@@ -1343,16 +1395,15 @@ export async function POST(req: Request) {
         architecture: sessionContext.architecture,
         reviewFindings: openFindings,
       });
+      const scopedAgents = resolvePhaseSubagents(selectedPhase, openFindings);
+      const allowedTools = resolveAllowedToolsForPhase(selectedPhase, openFindings);
 
       if (openFindings.length > 0) {
         emit({ type: "phase_progress", phase: selectedPhase, progress: 7, message: "Applying prior review findings" });
       }
 
       try {
-        const adaptiveGuardrails = await timed(
-          "adaptive_guardrails_fetch",
-          async () => guardrailsPromise,
-        );
+        let adaptiveGuardrails: string | null = null;
         const shouldValidate =
           selectedPhase === "implementation" ||
           selectedPhase === "review" ||
@@ -1395,6 +1446,8 @@ export async function POST(req: Request) {
                 apiKey,
                 controller,
                 encoder,
+                allowedTools,
+                scopedAgents,
                 signal: requestSignal,
                 attempt: 1,
               }),
@@ -1440,6 +1493,8 @@ export async function POST(req: Request) {
                     apiKey,
                     controller,
                     encoder,
+                    allowedTools,
+                    scopedAgents,
                     enableSpeculativeCompile: true,
                     signal: attemptSignal,
                     attempt,
@@ -1526,59 +1581,8 @@ export async function POST(req: Request) {
             }
 
             const blockingBeforeDeterministic = blockingDiagnostics.length;
-            let deterministicOutcome = applyDeterministicFixes(diagnostics);
-            let deterministicRevalidated = false;
-
-            if (extractedCode && deterministicOutcome.autoFixedCount > 0) {
-              const initialOutcome = deterministicOutcome;
-              try {
-                const postFixValidation = await timed(
-                  "compile_validate_post_deterministic",
-                  () => compileAndValidateWithKicad(extractedCode, attemptSignal),
-                  attempt,
-                );
-                deterministicRevalidated = true;
-                if (postFixValidation.kicadResult?.kicadSchema) {
-                  sessionContext.lastKicadSchema = postFixValidation.kicadResult.kicadSchema;
-                  sessionContext.lastGeneratedCode = extractedCode;
-                }
-                const postFixPrioritized = prioritizeDiagnosticsForRetry(
-                  postFixValidation.allDiagnostics,
-                );
-                const postValidationOutcome = applyDeterministicFixes(postFixPrioritized.deduped);
-                deterministicOutcome = {
-                  diagnostics: postValidationOutcome.diagnostics,
-                  autoFixedCount:
-                    initialOutcome.autoFixedCount + postValidationOutcome.autoFixedCount,
-                  demotedCount:
-                    initialOutcome.demotedCount + postValidationOutcome.demotedCount,
-                  appliedActions: uniqueSorted([
-                    ...initialOutcome.appliedActions,
-                    ...postValidationOutcome.appliedActions,
-                  ]),
-                  autoFixableFamilies: uniqueSorted([
-                    ...initialOutcome.autoFixableFamilies,
-                    ...postValidationOutcome.autoFixableFamilies,
-                  ]),
-                  shouldDemoteFamilies: uniqueSorted([
-                    ...initialOutcome.shouldDemoteFamilies,
-                    ...postValidationOutcome.shouldDemoteFamilies,
-                  ]),
-                  mustRepairFamilies: uniqueSorted([
-                    ...initialOutcome.mustRepairFamilies,
-                    ...postValidationOutcome.mustRepairFamilies,
-                  ]),
-                };
-              } catch {
-                deterministicOutcome = {
-                  ...deterministicOutcome,
-                  appliedActions: uniqueSorted([
-                    ...deterministicOutcome.appliedActions,
-                    "revalidate_failed",
-                  ]),
-                };
-              }
-            }
+            const deterministicOutcome = applyDeterministicFixes(diagnostics);
+            const deterministicRevalidated = false;
 
             const postDeterministic = prioritizeDiagnosticsForRetry(deterministicOutcome.diagnostics);
             diagnostics = postDeterministic.deduped;
@@ -1615,13 +1619,19 @@ export async function POST(req: Request) {
                 diagnostics: limitDiagnosticsForReviewFindings(diagnostics),
                 emit,
               });
-              sessionContext.reviewFindings = closeResolvedFindingsForPhase(
+              const beforeClose = sessionContext.reviewFindings;
+              const closedResolved = closeResolvedFindingsForPhase(
                 sessionContext.reviewFindings,
                 selectedPhase,
                 new Set(attemptFindings.map((finding) => finding.id)),
               );
+              emitResolvedReviewDecisions({
+                before: beforeClose,
+                after: closedResolved,
+                emit,
+              });
               sessionContext.reviewFindings = mergeReviewFindings(
-                sessionContext.reviewFindings,
+                closedResolved,
                 attemptFindings,
               );
             }
@@ -1741,6 +1751,13 @@ export async function POST(req: Request) {
             });
 
             if (shouldStop) break;
+            if (adaptiveGuardrails === null) {
+              adaptiveGuardrails = await timed(
+                "adaptive_guardrails_fetch",
+                async () => getAdaptiveGuardrailsPersistent(),
+                attempt,
+              );
+            }
 
             promptForAttempt = buildRetryPrompt({
               userPrompt: promptForUser,
@@ -1751,7 +1768,7 @@ export async function POST(req: Request) {
               diagnostics: focusedDiagnostics,
               attempt,
               maxAttempts: MAX_REPAIR_ATTEMPTS,
-              adaptiveGuardrails,
+              adaptiveGuardrails: adaptiveGuardrails ?? "",
               deterministicActions: deterministicOutcome.appliedActions,
             });
             emit({
@@ -1768,7 +1785,8 @@ export async function POST(req: Request) {
           const autoDismissed: string[] = [];
           sessionContext.reviewFindings = sessionContext.reviewFindings.map((finding) => {
             if (finding.status !== "open") return finding;
-            if (!autoResolveFamilies.has(finding.category)) return finding;
+            const family = resolveFindingFamily(finding);
+            if (!autoResolveFamilies.has(family)) return finding;
             autoDismissed.push(finding.id);
             return { ...finding, status: "dismissed" as const };
           });

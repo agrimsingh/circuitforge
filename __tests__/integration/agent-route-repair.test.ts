@@ -86,7 +86,7 @@ describe("Agent route — deterministic repair loop", () => {
     else delete process.env.ANTHROPIC_API_KEY;
   });
 
-  it("emits repair evidence, applies deterministic handling, and revalidates", async () => {
+  it("emits repair evidence and applies deterministic handling", async () => {
     const offGrid = {
       category: "OFF_GRID_WARNING",
       message: "Wire segment is off grid by 0.25mil.",
@@ -150,13 +150,24 @@ describe("Agent route — deterministic repair loop", () => {
       (event): event is Extract<SSEEvent, { type: "repair_result" }> =>
         event.type === "repair_result",
     );
+    const reviewDecisions = events.filter(
+      (event): event is Extract<SSEEvent, { type: "review_decision" }> =>
+        event.type === "review_decision",
+    );
 
     expect(repairPlans.length).toBeGreaterThan(0);
     expect(repairResults.length).toBeGreaterThan(0);
     expect(repairResults.some((event) => event.result.autoFixedCount > 0)).toBe(true);
     expect(repairResults.some((event) => event.result.demotedCount > 0)).toBe(true);
-    expect(repairResults.some((event) => event.result.revalidated)).toBe(true);
+    expect(repairResults.every((event) => event.result.revalidated === false)).toBe(true);
     expect(repairResults.every((event) => event.result.blockingAfter <= event.result.blockingBefore)).toBe(true);
+    expect(
+      reviewDecisions.some(
+        (event) =>
+          event.decision.decision === "dismiss" &&
+          event.decision.findingId.includes("PIN_CONFLICT_WARNING"),
+      ),
+    ).toBe(true);
     expect(events.some((event) => event.type === "final_summary")).toBe(true);
     expect(events.some((event) => event.type === "done")).toBe(true);
     expect(compileMock).toHaveBeenCalledTimes(3);

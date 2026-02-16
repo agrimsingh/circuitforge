@@ -7,6 +7,7 @@ import {
 import { convertCircuitJsonToBomRows, convertBomRowsToCsv } from "circuit-json-to-bom-csv";
 import { convertCircuitJsonToPickAndPlaceCsv } from "circuit-json-to-pnp-csv";
 import { assessKicadFindings } from "@/lib/kicad/review";
+import { compileForValidation } from "@/lib/agent/repairLoop";
 import type { ValidationDiagnostic } from "@/lib/stream/types";
 import JSZip from "jszip";
 
@@ -18,7 +19,8 @@ interface ExportFormatSet {
 }
 
 interface ExportRequestBody {
-  circuit_json: unknown[];
+  circuit_json?: unknown[];
+  tscircuit_code?: string;
   formatSet?: ExportFormatSet;
   readiness?: {
     criticalFindingsCount?: number;
@@ -38,16 +40,34 @@ export async function POST(req: Request) {
     });
   }
 
-  if (!Array.isArray(body.circuit_json)) {
+  const hasCircuitJson = Array.isArray(body.circuit_json);
+  const hasTscircuitCode =
+    typeof body.tscircuit_code === "string" && body.tscircuit_code.trim().length > 0;
+  if (!hasCircuitJson && !hasTscircuitCode) {
     return new Response(
       JSON.stringify({
-        error: "Missing 'circuit_json' array in body",
+        error: "Missing 'circuit_json' array or 'tscircuit_code' string in body",
       }),
       { status: 400, headers: { "Content-Type": "application/json" } }
     );
   }
 
-  const soup = body.circuit_json;
+  let soup: unknown[] = [];
+  if (hasCircuitJson) {
+    soup = body.circuit_json as unknown[];
+  } else {
+    const compile = await compileForValidation(body.tscircuit_code!.trim(), req.signal);
+    if (!compile.ok || !compile.circuitJson) {
+      return new Response(
+        JSON.stringify({
+          error: "Export compile failed",
+          details: compile.errorMessage ?? "compile failed",
+        }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    soup = compile.circuitJson;
+  }
   const formatSet = body.formatSet ?? {};
   const criticalFindingsCount = Number.isFinite(body.readiness?.criticalFindingsCount)
     ? Math.max(0, Number(body.readiness?.criticalFindingsCount))
@@ -70,72 +90,93 @@ export async function POST(req: Request) {
     const zip = new JSZip();
     const gerbers = zip.folder("gerbers")!;
 
-    const gerberCommands = convertSoupToGerberCommands(soup as never);
-    const layers = stringifyGerberCommandLayers(gerberCommands as never);
+    const layersPromise = Promise.resolve().then(() => {
+      const gerberCommands = convertSoupToGerberCommands(soup as never);
+      return stringifyGerberCommandLayers(gerberCommands as never);
+    });
+    const platedDrillPromise = Promise.resolve().then(() => {
+      try {
+        const drill = convertSoupToExcellonDrillCommands({
+          circuitJson: soup as never,
+          is_plated: true,
+        });
+        return stringifyExcellonDrill(drill as never);
+      } catch {
+        return null;
+      }
+    });
+    const unplatedDrillPromise = Promise.resolve().then(() => {
+      try {
+        const drill = convertSoupToExcellonDrillCommands({
+          circuitJson: soup as never,
+          is_plated: false,
+        });
+        return stringifyExcellonDrill(drill as never);
+      } catch {
+        return null;
+      }
+    });
+    const bomPromise = convertCircuitJsonToBomRows({ circuitJson: soup as never })
+      .then((rows) => convertBomRowsToCsv(rows))
+      .catch(() => "# BOM generation failed\n");
+    const pnpPromise = Promise.resolve().then(() => {
+      try {
+        return convertCircuitJsonToPickAndPlaceCsv(soup as never);
+      } catch {
+        return "# PNP generation failed\n";
+      }
+    });
+    const kicadPromise =
+      formatSet.kicad || formatSet.reviewBundle
+        ? assessKicadFindings(soup).catch(() => null)
+        : Promise.resolve(null);
+
+    const [layers, platedDrill, unplatedDrill, bomCsv, pnpCsv, kicadResult] = await Promise.all([
+      layersPromise,
+      platedDrillPromise,
+      unplatedDrillPromise,
+      bomPromise,
+      pnpPromise,
+      kicadPromise,
+    ]);
+
     for (const [name, content] of Object.entries(layers)) {
       gerbers.file(`${name}.gbr`, content as string);
     }
 
-    try {
-      const drill = convertSoupToExcellonDrillCommands({
-        circuitJson: soup as never,
-        is_plated: true,
-      });
-      gerbers.file("plated.drl", stringifyExcellonDrill(drill as never));
-    } catch {
-      // no plated holes
-    }
+    if (platedDrill) gerbers.file("plated.drl", platedDrill);
+    if (unplatedDrill) gerbers.file("unplated.drl", unplatedDrill);
 
-    try {
-      const drill = convertSoupToExcellonDrillCommands({
-        circuitJson: soup as never,
-        is_plated: false,
-      });
-      gerbers.file("unplated.drl", stringifyExcellonDrill(drill as never));
-    } catch {
-      // no unplated holes
-    }
-
-    try {
-      const bomRows = await convertCircuitJsonToBomRows({ circuitJson: soup as never });
-      zip.file("bom.csv", convertBomRowsToCsv(bomRows));
-    } catch {
-      zip.file("bom.csv", "# BOM generation failed\n");
-    }
-
-    try {
-      zip.file("pnp.csv", convertCircuitJsonToPickAndPlaceCsv(soup as never));
-    } catch {
-      zip.file("pnp.csv", "# PNP generation failed\n");
-    }
+    zip.file("bom.csv", bomCsv);
+    zip.file("pnp.csv", pnpCsv);
 
     if (formatSet.kicad || formatSet.reviewBundle) {
-      const kicadResult = await assessKicadFindings(soup);
+      const safeKicadResult = kicadResult;
       const schemaText =
-        typeof kicadResult.kicadSchema === "string" && kicadResult.kicadSchema.trim()
-          ? kicadResult.kicadSchema
+        typeof safeKicadResult?.kicadSchema === "string" && safeKicadResult.kicadSchema.trim()
+          ? safeKicadResult.kicadSchema
           : "(kicad_sch\n  (version 20211014)\n  (generator CircuitForge)\n  (comment \"kicad conversion unavailable\")\n)";
 
       zip.file("kicad_sch", schemaText);
 
       if (formatSet.reviewBundle) {
-        const findings = kicadResult.findings
+        const findings = (safeKicadResult?.findings ?? [])
           .map((entry) => entry as ValidationDiagnostic)
           .slice(0, 500);
         zip.file(
           "connectivity.json",
-          JSON.stringify(kicadResult.connectivity ?? {}, null, 2)
+          JSON.stringify(safeKicadResult?.connectivity ?? {}, null, 2)
         );
         zip.file(
           "kicad_report.json",
           JSON.stringify(
             {
-              ok: kicadResult.ok,
+              ok: safeKicadResult?.ok ?? false,
               findings,
-              traceability: kicadResult.traceability,
-              connectivity: kicadResult.connectivity,
+              traceability: safeKicadResult?.traceability ?? null,
+              connectivity: safeKicadResult?.connectivity ?? null,
               metadata: {
-                ...kicadResult.metadata,
+                ...(safeKicadResult?.metadata ?? {}),
                 findingsCount: findings.length,
               },
             },
@@ -164,4 +205,3 @@ export async function POST(req: Request) {
     );
   }
 }
-

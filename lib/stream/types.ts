@@ -130,8 +130,8 @@ export type SSEEvent =
   | { type: "text"; content: string }
   | { type: "thinking"; content: string }
   | { type: "code"; file: string; content: string }
-  | { type: "tool_start"; tool: string; input: unknown }
-  | { type: "tool_result"; tool: string; output: unknown }
+  | { type: "tool_start"; callId?: string; tool: string; input: unknown }
+  | { type: "tool_result"; callId?: string; tool: string; output: unknown }
   | { type: "subagent_start"; agent: string }
   | { type: "subagent_stop"; agent: string }
   | { type: "retry_start"; attempt: number; maxAttempts: number }

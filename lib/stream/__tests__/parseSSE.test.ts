@@ -44,7 +44,7 @@ describe("SSE parser", () => {
   it("parses multiple events in one chunk", () => {
     const raw = [
       `data: {"type":"text","content":"A"}`,
-      `data: {"type":"tool_start","tool":"search_parts","input":{"q":"ESP32"}}`,
+      `data: {"type":"tool_start","callId":"tool-123","tool":"search_parts","input":{"q":"ESP32"}}`,
       `data: {"type":"done","usage":{}}`,
       "",
     ].join("\n");
@@ -53,6 +53,9 @@ describe("SSE parser", () => {
     expect(events).toHaveLength(3);
     expect(events[0].type).toBe("text");
     expect(events[1].type).toBe("tool_start");
+    if (events[1].type === "tool_start") {
+      expect(events[1].callId).toBe("tool-123");
+    }
     expect(events[2].type).toBe("done");
   });
 

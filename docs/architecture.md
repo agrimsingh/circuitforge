@@ -6,10 +6,13 @@ CircuitForge is a conversational AI agent that designs electronic circuits from 
 
 ## Milestone Update (2026-02-17)
 
-- **Self-hosted tscircuit compiler**: Replaced external `compile.tscircuit.com` API and Vercel Sandbox compile pool with local `@tscircuit/eval` `CircuitRunner`. No more 90-second external timeout. Compilation runs in-process with no hard limit. Remote API retained as automatic fallback. New `lib/compile/local.ts` utility and `/api/compile` route for client-side export.
+- **Self-hosted tscircuit compiler**: Replaced external `compile.tscircuit.com` API and Vercel Sandbox compile pool with local `@tscircuit/eval` `CircuitRunner`. No more 90-second external timeout. Compilation runs in-process with no hard limit. Remote API retained as automatic fallback. `lib/compile/local.ts` now powers both `/api/compile` and direct `/api/export` `tscircuit_code` requests.
 - `.pnpmfile.cjs` hook ensures tscircuit ecosystem packages receive `zod@3` while `@anthropic-ai/claude-agent-sdk` keeps `zod@4`.
 - Post-validation summary: `buildPostValidationSummary()` appends a human-readable text block to the final agent message with blocking count, auto-fix count, warnings, readiness score, and next-step guidance.
 - Review findings now emitted **after** deterministic fixes so auto-fixed issues are excluded from the findings stream.
+- Review finding lifecycle sync: server now emits `review_decision` dismissal events when previously-open findings disappear in later attempts, and client upserts preserve prior accepted/dismissed state.
+- Chat now includes a rolling in-thread progress narration message (phase/retry/repair/gate/summary) so users see state + next steps without relying only on chain-of-thought UI.
+- Stream completion now appends a deterministic assistant recap message (phase/readiness/diagnostics/auto-fix totals/next prompts), and chain-of-thought auto-collapses once streaming ends.
 - Agent todo queue: frontend intercepts `TodoWrite` tool_start events, merges todo items into stream state (`TodoItem[]`), and renders a collapsible `TodoQueue` component in chat with spinning/done indicators.
 - New `components/ai-elements/queue.tsx` Queue primitive library (Queue, QueueItem, QueueList, QueueSection, etc.) built on Radix Collapsible + ScrollArea.
 - Export readiness check uses `blockingDiagnosticsCount === 0` instead of `diagnosticsCount === 0` (advisory warnings no longer gate export).
@@ -54,7 +57,7 @@ Browser (Next.js)
 │   └── Live RunFrame preview in WebPreview wrapper
 └── Info Panel (AI-native)
     ├── Workflow strip + reasoning telemetry
-    ├── Tool card log
+    ├── Collapsed pipeline activity summary + raw-call drill-down
     ├── Requirements + architecture graph
     ├── Review findings with accept/dismiss actions
     └── Optional gate confirmation prompts (fallback UX)
@@ -70,7 +73,7 @@ Browser (Next.js)
     │   └── Subagent: Validator — claude-opus-4-6
     ├── MCP Tool: jlcsearch (in-process)
     ├── Hooks: PreToolUse, PostToolUse, SubagentStart/Stop
-    └── Built-in Tools: WebFetch, WebSearch
+    └── Built-in Tools (phase-scoped): WebFetch, WebSearch, Task
 
     Self-correction loop
     ├── Phase state machine (requirements → architecture → implementation → review → export)
@@ -78,7 +81,7 @@ Browser (Next.js)
     ├── Preventive routing guardrails (trace/via spacing hints)
     ├── Rolling error memory (in-memory fallback + Convex persistence)
     ├── Attempt orchestration (max retries + stagnation stop)
-    ├── Speculative compilation (overlap with LLM stream)
+    ├── Speculative compilation after stable TSX fence detection (overlap with LLM stream)
     ├── Local compile via @tscircuit/eval CircuitRunner (no external timeout)
     ├── Remote compile.tscircuit.com fallback (30s fetch timeout)
     ├── Parallel post-compile: KiCad analysis + tscircuit diagnostics via Promise.all
@@ -132,7 +135,7 @@ Browser (Next.js)
 | `app/api/agent/` | SSE streaming endpoint + self-correction retry loop |
 | `app/api/export/` | Manufacturing export (BOM/Gerbers/PNP → zip) |
 | `app/api/kicad/` | KiCad validation endpoint |
-| `app/api/compile/` | Local tscircuit compilation route (client-side export) |
+| `app/api/compile/` | Local tscircuit compilation route |
 | `app/api/manufacturing/` | Manufacturing connector payload route |
 | `app/api/sandbox/quickstart/` | Sandbox smoke-test endpoint (create VM, run command, teardown) |
 | `components/` | React UI components |
@@ -159,7 +162,7 @@ Browser (Next.js)
 11. Frontend parses SSE into split panels: chat (code blocks replaced with placeholder), artifact preview (RunFrame), and workflow (phase/tool/requirements/review)
 12. Frontend derives `phaseSteps` and `gateEvents` from stream events to drive chain-of-thought state and approval prompts without changing backend SSE contract
 13. RunFrame renders live schematic/PCB/3D preview in iframe via Artifact/WebPreview composition
-13. Export: client compiles via `/api/compile` (local @tscircuit/eval) → server validates/converts to zip (+ optional KiCad bundle)
+13. Export: client sends `tscircuit_code` directly to `/api/export`; server compiles once, generates artifacts in parallel, and returns zip (+ optional KiCad bundle)
 14. Optional KiCad validation: `/api/kicad/validate` returns schema, findings, and connectivity metadata
 15. Sandbox setup validation: `/api/sandbox/quickstart` creates a microVM, executes a command, then tears down
 
@@ -187,7 +190,7 @@ Browser (Next.js)
 
 - KiCad + tscircuit diagnostics run in parallel in `lib/agent/repairLoop.ts` (`Promise.all`).
 - KiCad schema analyses (connectivity/ERC/BOM) run in parallel in `lib/kicad/review.ts` (`Promise.all`).
-- Guardrail fetch starts early and is awaited later in `/api/agent`.
+- Guardrail fetch is lazy and only runs when a retry prompt is needed.
 - Speculative compile starts during token streaming and can be reused if final code matches.
 
 ### Reliability controls now in place

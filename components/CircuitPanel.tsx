@@ -25,7 +25,7 @@ interface CircuitPanelProps {
   onExport: () => void;
   isExporting: boolean;
   isStreaming?: boolean;
-  exportStage?: "compiling" | "packaging" | "downloading" | null;
+  exportStage?: "packaging" | "downloading" | null;
   title?: string;
   description?: string;
   readinessScore?: number | null;
@@ -60,12 +60,10 @@ function RunFramePreview({ code }: { code: string }) {
       }
     };
 
-    setIframeReady(false);
-
     window.addEventListener("message", handleMessage);
     if (readyRef.current) {
       sendCode();
-      setIframeReady(true);
+      setTimeout(() => setIframeReady(true), 0);
     }
 
     return () => window.removeEventListener("message", handleMessage);
@@ -119,11 +117,9 @@ export function CircuitPanel({
   }, [code]);
 
   const exportLabel = exportStage
-    ? exportStage === "compiling"
-      ? "Compiling…"
-      : exportStage === "packaging"
-        ? "Packaging…"
-        : "Downloading…"
+    ? exportStage === "packaging"
+      ? "Packaging…"
+      : "Downloading…"
     : isExporting
       ? "Exporting…"
       : "Export";

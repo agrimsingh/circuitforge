@@ -34,7 +34,7 @@ The orchestration layer runs on the [Anthropic Agent SDK](https://docs.anthropic
 
 - **Multi-model sub-agents** -- Four specialist agents are defined as SDK `AgentDefinition` objects, each pinned to the right model for its job. Opus orchestrates and reviews. Sonnet writes tscircuit code. Haiku scouts parts from JLCPCB inventory. The orchestrator delegates to them by context, not hardcoded sequence.
 - **MCP tool servers** -- External capabilities (JLCPCB parts search, web fetch) are exposed through `createSdkMcpServer()` so the agent invokes them as native tool calls with Zod-validated schemas.
-- **Streaming hooks** -- `PreToolUse`, `PostToolUse`, `SubagentStart`, `SubagentStop` hooks emit SSE events in real time, powering the chain-of-thought UI, tool timeline, and sub-agent activity indicators without polling.
+- **Streaming hooks** -- `PreToolUse`, `PostToolUse`, `SubagentStart`, `SubagentStop` hooks emit SSE events in real time (with per-call correlation IDs), powering the chain-of-thought UI, tool timeline, and sub-agent activity indicators without polling.
 - **Adaptive thinking** -- The orchestrator runs with `thinking: { type: "adaptive" }`, so reasoning depth scales with problem complexity. Simple tweaks get fast responses; tricky electrical issues get deep deliberation.
 - **Speculative compilation** -- Code blocks are detected mid-stream and compiled locally via `@tscircuit/eval` before the agent finishes its turn, overlapping validation with generation. No external API timeout limits.
 
@@ -158,5 +158,5 @@ The smoke run now fails fast if the selected prompt set is missing or invalid.
 - `POST /api/compile` - local tscircuit compilation (`@tscircuit/eval`, remote fallback)
 - `POST /api/kicad/validate` - compile/convert + KiCad validation + report artifacts
 - `POST /api/kicad/edit` - apply MCP-style KiCad operations to a schematic
-- `POST /api/export` - manufacturing zip export with optional KiCad review bundle
+- `POST /api/export` - manufacturing zip export (accepts `circuit_json` or `tscircuit_code`) with optional KiCad review bundle
 - `POST /api/manufacturing/jlcpcb-link` - v1 export payload stub for manufacturing payload
