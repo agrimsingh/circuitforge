@@ -7,6 +7,59 @@ export interface LocalCompileResult {
 
 const REMOTE_COMPILE_URL = "https://compile.tscircuit.com/api/compile";
 const REMOTE_FETCH_TIMEOUT_MS = 30_000;
+const CWD_FILE_BASE = process.cwd().endsWith("/") ? process.cwd() : `${process.cwd()}/`;
+const EVAL_ENTRY_FILE_URL = new URL(
+  "./node_modules/@tscircuit/eval/dist/lib/index.js",
+  `file://${CWD_FILE_BASE}`,
+);
+
+type CircuitRunnerCtor = new () => {
+  executeWithFsMap: (params: Record<string, unknown>) => Promise<void>;
+  renderUntilSettled: () => Promise<void>;
+  getCircuitJson: () => Promise<unknown>;
+  kill?: () => void;
+};
+
+let cachedCircuitRunnerCtor: CircuitRunnerCtor | null = null;
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isConstructor(value: unknown): value is CircuitRunnerCtor {
+  return typeof value === "function";
+}
+
+async function loadCircuitRunnerCtor(): Promise<CircuitRunnerCtor> {
+  if (cachedCircuitRunnerCtor) return cachedCircuitRunnerCtor;
+
+  let primaryError: unknown = null;
+  try {
+    const loaded = (await import("@tscircuit/eval")) as Record<string, unknown>;
+    if (isConstructor(loaded.CircuitRunner)) {
+      cachedCircuitRunnerCtor = loaded.CircuitRunner;
+      return cachedCircuitRunnerCtor;
+    }
+    throw new Error("`@tscircuit/eval` did not export a CircuitRunner constructor");
+  } catch (error) {
+    primaryError = error;
+  }
+
+  try {
+    const loaded = (await import(EVAL_ENTRY_FILE_URL.href)) as Record<string, unknown>;
+    if (isConstructor(loaded.CircuitRunner)) {
+      cachedCircuitRunnerCtor = loaded.CircuitRunner;
+      return cachedCircuitRunnerCtor;
+    }
+    throw new Error("Fallback import did not export a CircuitRunner constructor");
+  } catch (fallbackError) {
+    const primaryMessage = getErrorMessage(primaryError);
+    const fallbackMessage = getErrorMessage(fallbackError);
+    throw new Error(
+      `Unable to load @tscircuit/eval CircuitRunner. primary=${primaryMessage}; fallback=${fallbackMessage}`,
+    );
+  }
+}
 
 /**
  * Compile tscircuit TSX code locally using @tscircuit/eval.
@@ -20,7 +73,7 @@ export async function compileLocally(
     throw new DOMException("Compile aborted", "AbortError");
   }
 
-  const { CircuitRunner } = await import("@tscircuit/eval");
+  const CircuitRunner = await loadCircuitRunnerCtor();
   const runner = new CircuitRunner();
 
   let abortHandler: (() => void) | null = null;

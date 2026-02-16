@@ -29,6 +29,8 @@ import {
   useState,
 } from "react";
 import { createHighlighter } from "shiki";
+import githubDark from "shiki/themes/github-dark.mjs";
+import githubLight from "shiki/themes/github-light.mjs";
 
 // Shiki uses bitflags for font styles: 1=italic, 2=bold, 4=underline
 const isItalic = (fontStyle: number | undefined) => fontStyle && fontStyle & 1;
@@ -141,7 +143,7 @@ const getHighlighter = (
 
   const highlighterPromise = createHighlighter({
     langs: [language],
-    themes: ["github-light", "github-dark"],
+    themes: [githubLight, githubDark],
   });
 
   highlighterCache.set(language, highlighterPromise);

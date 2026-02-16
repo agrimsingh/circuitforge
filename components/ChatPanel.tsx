@@ -96,11 +96,11 @@ const TodoQueue = memo(function TodoQueue({ todos }: { todos: TodoItem[] }) {
         </QueueSectionTrigger>
         <QueueSectionContent>
           <ul className="mt-2 -mb-1">
-            {todos.map((todo) => {
+            {todos.map((todo, i) => {
               const done =
                 todo.status === "completed" || todo.status === "cancelled";
               return (
-                <QueueItem key={todo.id}>
+                <QueueItem key={todo.id || `todo-${i}`}>
                   <div className="flex items-start gap-2">
                     {todo.status === "in_progress" ? (
                       <span className="mt-0.5 inline-block size-2.5 rounded-full border-2 border-accent/50 border-t-accent animate-spin" />

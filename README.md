@@ -22,6 +22,12 @@ CircuitForge is a self-correcting, self-improving circuit design agent. You desc
 
 The result: you get a validated, manufacturable circuit -- not a first draft you have to babysit.
 
+### How Self-Learning Works
+
+Every validation failure is decomposed into error categories (`pcb_trace_error`, `via_clearance`, etc.). Each category is tracked with an exponentially weighted moving average (7-day half-life) so recent failures rank higher than old ones. Before each generation attempt, the top recurring categories are pulled back as guardrails injected into the agent's retry prompt — with actionable hints like "spread different-net vias apart" or "increase spacing and reduce routing density."
+
+Works in-memory out of the box. Add [Convex persistence](#convex-persistence-setup-optional) to carry learnings across deploys.
+
 ### Built on the Claude Agent SDK
 
 The orchestration layer runs on the [Anthropic Agent SDK](https://docs.anthropic.com/en/docs/agents/agent-sdk) -- not as a thin wrapper, but using the full primitives:
