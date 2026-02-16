@@ -695,10 +695,15 @@ function isLikelyFunctionalPin(pin: string | null): boolean {
   return false;
 }
 
+function isGenericNumberedPin(pin: string | null): boolean {
+  if (!pin) return false;
+  return /^\d+$/.test(pin);
+}
+
 function shouldTreatUnconnectedPinAsMustRepair(message: string): boolean {
   const context = parseUnconnectedPinContext(message);
-  if (isLikelyActiveComponentReference(context.reference)) return true;
   if (isLikelyFunctionalPin(context.pin)) return true;
+  if (isGenericNumberedPin(context.pin)) return false;
   const normalized = message.toLowerCase();
   return /\b(opamp|regulator|mcu|driver|mosfet|transistor)\b/.test(normalized);
 }
@@ -847,6 +852,30 @@ function computeManufacturingReadinessScore(
   score -= Math.min(25, warningCount * 2);
   score -= Math.min(20, openCriticalFindings * 10);
   return Math.max(0, score);
+}
+
+function buildPostValidationSummary(summary: {
+  blockingDiagnosticsCount: number;
+  warningDiagnosticsCount: number;
+  manufacturingReadinessScore: number;
+}, autoFixedCount: number): string {
+  const lines: string[] = [];
+  if (summary.blockingDiagnosticsCount === 0) {
+    lines.push("Circuit passed validation with no blocking issues.");
+  } else {
+    lines.push(`${summary.blockingDiagnosticsCount} blocking issue(s) remain.`);
+  }
+  if (autoFixedCount > 0) {
+    lines.push(`Auto-fixed ${autoFixedCount} minor issues (grid alignment, labels, passive pins).`);
+  }
+  if (summary.warningDiagnosticsCount > 0) {
+    lines.push(`${summary.warningDiagnosticsCount} advisory warning(s) noted.`);
+  }
+  lines.push(`Manufacturing readiness: ${summary.manufacturingReadinessScore}/100.`);
+  if (summary.blockingDiagnosticsCount === 0) {
+    lines.push("\nYou can export this design, or ask me to refine specific aspects.");
+  }
+  return "\n\n---\n" + lines.join(" ");
 }
 
 function diagnosticsKey(entry: ValidationDiagnostic): string {
@@ -1336,6 +1365,7 @@ export async function POST(req: Request) {
         let repeatedSignatureCount = 0;
         let lastAttemptText = "";
         let lastAttemptDiagnostics: ValidationDiagnostic[] = [];
+        let lastAutoFixedCount = 0;
         let totalCostUsd = 0;
         let attemptsUsed = 0;
         const diffBaselineCode = sessionContext.lastGeneratedCode ?? body.previousCode ?? null;
@@ -1493,20 +1523,6 @@ export async function POST(req: Request) {
                 sessionContext.lastGeneratedCode = extractedCode;
               }
 
-              const attemptFindings = emitReviewFindingsFromDiagnostics({
-                phase: selectedPhase,
-                diagnostics: limitDiagnosticsForReviewFindings(diagnostics),
-                emit,
-              });
-              sessionContext.reviewFindings = closeResolvedFindingsForPhase(
-                sessionContext.reviewFindings,
-                selectedPhase,
-                new Set(attemptFindings.map((finding) => finding.id)),
-              );
-              sessionContext.reviewFindings = mergeReviewFindings(
-                sessionContext.reviewFindings,
-                attemptFindings,
-              );
             }
 
             const blockingBeforeDeterministic = blockingDiagnostics.length;
@@ -1593,7 +1609,25 @@ export async function POST(req: Request) {
               },
             });
 
+            {
+              const attemptFindings = emitReviewFindingsFromDiagnostics({
+                phase: selectedPhase,
+                diagnostics: limitDiagnosticsForReviewFindings(diagnostics),
+                emit,
+              });
+              sessionContext.reviewFindings = closeResolvedFindingsForPhase(
+                sessionContext.reviewFindings,
+                selectedPhase,
+                new Set(attemptFindings.map((finding) => finding.id)),
+              );
+              sessionContext.reviewFindings = mergeReviewFindings(
+                sessionContext.reviewFindings,
+                attemptFindings,
+              );
+            }
+
             lastAttemptDiagnostics = diagnostics;
+            lastAutoFixedCount = deterministicOutcome.autoFixedCount;
             if (blockingDiagnostics.length > 0) {
               void recordDiagnosticsSamplePersistent(blockingDiagnostics);
             }
@@ -1729,6 +1763,23 @@ export async function POST(req: Request) {
           }
         }
 
+        {
+          const autoResolveFamilies = new Set(["kicad_unconnected_pin", "off_grid", "floating_label"]);
+          const autoDismissed: string[] = [];
+          sessionContext.reviewFindings = sessionContext.reviewFindings.map((finding) => {
+            if (finding.status !== "open") return finding;
+            if (!autoResolveFamilies.has(finding.category)) return finding;
+            autoDismissed.push(finding.id);
+            return { ...finding, status: "dismissed" as const };
+          });
+          for (const findingId of autoDismissed) {
+            emit({
+              type: "review_decision",
+              decision: { findingId, decision: "dismiss" },
+            });
+          }
+        }
+
         const bestAttemptBlocking = bestAttempt
           ? prioritizeDiagnosticsForRetry(bestAttempt.diagnostics).blocking
           : [];
@@ -1784,7 +1835,8 @@ export async function POST(req: Request) {
           type: "final_summary",
           summary: finalSummary,
         });
-        emit({ type: "text", content: finalText });
+        const postSummary = buildPostValidationSummary(finalSummary, lastAutoFixedCount);
+        emit({ type: "text", content: finalText + postSummary });
         emit({
           type: "done",
           usage: {
