@@ -24,6 +24,9 @@
 | `components/ai-elements/` | AI-native UI primitives (Queue, Conversation, ChainOfThought, etc.) |
 | `convex/` | Convex schema + HTTP actions for persistent self-learning memory |
 | `lib/agent/` | Agent SDK config, prompts, tools, models |
+| `lib/agent/architecture.ts` | Haiku-driven architecture synthesis + schema normalization fallback |
+| `lib/agent/connectivityPreflight.ts` | Semantic trace/selector/component/pin validation before compile |
+| `lib/agent/tscircuitReference.ts` | Cached diagnostic-targeted snippet extractor from `docs.tscircuit.com/ai.txt` |
 | `lib/compile/` | Local tscircuit compiler (`@tscircuit/eval` wrapper + remote fallback) |
 | `lib/kicad/` | KiCad conversion, bridge, and review helpers |
 | `lib/stream/` | SSE event parsing + React hook |
@@ -87,3 +90,19 @@ If you're unsure whether a doc needs updating, it probably does. Stale docs are 
 | `CONVEX_SITE_URL` | No | Convex deployment URL for persistent error memory HTTP actions |
 | `NEXT_PUBLIC_CONVEX_SITE_URL` | No | Convex HTTP Actions URL (accepted fallback for persistence) |
 | `CIRCUITFORGE_CONVEX_SHARED_SECRET` | No | Shared secret between Next route and Convex HTTP actions |
+| `CIRCUITFORGE_COMPILE_VALIDATE_TIMEOUT_MS` | No | Per-attempt compile/validation timeout in milliseconds (default `240000`) |
+| `CIRCUITFORGE_CODEGEN_MODEL` | No | Code-writer model selector (`opus` default, `sonnet` for faster/cheaper runs) |
+| `CIRCUITFORGE_MAX_REPAIR_ATTEMPTS` | No | Max autonomous repair-loop attempts per run (`6` default in non-test runtime) |
+| `CIRCUITFORGE_RETRY_STAGNATION_LIMIT` | No | Consecutive no-progress attempts before stop (`4` default in non-test runtime) |
+| `CIRCUITFORGE_SIGNATURE_REPEAT_LIMIT` | No | Repeated diagnostic-signature threshold before stop (`3` default in non-test runtime) |
+| `CIRCUITFORGE_AUTOROUTER_STALL_LIMIT` | No | Consecutive autorouter-exhaustion attempts before stop (`4` default in non-test runtime) |
+| `CIRCUITFORGE_MAX_STRUCTURAL_REPAIR_ATTEMPTS` | No | Max structural strategy passes (`3` default in non-test runtime) |
+| `CIRCUITFORGE_MINOR_BOARD_GROWTH_CAP_PCT` | No | Max board growth cap for targeted congestion relief before structural escalation (`20` default) |
+| `CIRCUITFORGE_MINOR_COMPONENT_SHIFT_MM` | No | Max per-pass component movement cap (in mm) for targeted congestion relief (`3` default) |
+| `CIRCUITFORGE_MINOR_RELIEF_PASSES` | No | Number of minor targeted congestion-relief passes before escalating to structural spread (`2` default) |
+| `CIRCUITFORGE_STATUS_PULSE_MS` | No | Status pulse interval during long generation/validation operations (`8000` default) |
+| `CIRCUITFORGE_STRUCTURAL_REPAIR_TRIGGER` | No | Consecutive same-family/no-reduction streak before structural strategy switch (`2` default) |
+| `CIRCUITFORGE_ENABLE_CONNECTIVITY_PREFLIGHT` | No | Enable semantic trace/selector/component/pin preflight before compile (`true` default) |
+| `CIRCUITFORGE_ENABLE_STRUCTURAL_REPAIR_MODE` | No | Enable stuck-loop structural repair strategies (`true` default) |
+| `CIRCUITFORGE_USE_TSCIRCUIT_AI_REFERENCE` | No | Fetch diagnostic-targeted reference snippets from `docs.tscircuit.com/ai.txt` (`true` default; set `false` to disable) |
+| `CIRCUITFORGE_STRICT_BOM_AUDIT` | No | Enforce BOM audit on all component designators including passives (`false` default) |

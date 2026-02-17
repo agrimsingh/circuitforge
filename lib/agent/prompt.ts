@@ -50,6 +50,7 @@ ${CODE_FENCE}
 
 ## Key tscircuit Rules
 - Trace selectors use ">" syntax: 'from=".U1 > .pin1" to=".R1 > .pin2"'
+- Net names must start with a letter or underscore. Never use names like "3V3"; use "V3V3" instead.
 - Chips MUST have "pinLabels" to define pin names for traces
 - Crystal: "frequency" (number or string), "loadCapacitance", "pinVariant" ("two_pin" or "four_pin" — NOT "2pin"/"4pin")
 - "supplierPartNumbers" values must be arrays: '{ lcsc: ["C14877"] }' NOT '{ lcsc: "C14877" }'
@@ -142,7 +143,15 @@ export function architectureFromRequirements(prompt: string): ArchitectureNode[]
       label: "Power Management",
       kind: "power",
       status: "approved",
+      role: "power",
+      criticality: "high",
       notes: "Voltage regulation and protection",
+      inputs: ["Input supply"],
+      outputs: ["3V3 and board rails"],
+      interfaces: ["VIN", "GND", "3V3"],
+      keyComponents: ["Regulator", "Input protection"],
+      constraints: ["Rail ripple within subsystem tolerance"],
+      failureModes: ["Brownout resets logic blocks"],
       children: ["A2", "A3"],
     });
   }
@@ -153,7 +162,15 @@ export function architectureFromRequirements(prompt: string): ArchitectureNode[]
       label: "Connectivity",
       kind: "component",
       status: "proposed",
+      role: "connectivity",
+      criticality: "medium",
       notes: "Radio and protocol block",
+      inputs: ["Control from MCU"],
+      outputs: ["Wireless data uplink/downlink"],
+      interfaces: ["SPI/UART", "Antenna"],
+      keyComponents: ["RF module or radio SoC"],
+      constraints: ["Antenna keepout and protocol compatibility"],
+      failureModes: ["Packet loss or no RF link"],
     });
   }
 
@@ -162,7 +179,15 @@ export function architectureFromRequirements(prompt: string): ArchitectureNode[]
     label: "Controller",
     kind: "component",
     status: "approved",
+    role: "control",
+    criticality: "high",
     notes: "Core control logic and orchestration",
+    inputs: ["Power rails", "Sensor and user inputs"],
+    outputs: ["Control signals to peripherals"],
+    interfaces: ["GPIO", "I2C/SPI/UART", "Programming/debug"],
+    keyComponents: ["Primary MCU"],
+    constraints: ["Pin budget and clock/reset integrity"],
+    failureModes: ["Firmware lockup halts system behavior"],
     children: ["A1", ...(nodes.length > 1 ? ["A2"] : []), "A3"],
   });
 
@@ -171,7 +196,15 @@ export function architectureFromRequirements(prompt: string): ArchitectureNode[]
     label: "Peripherals",
     kind: "block",
     status: "approved",
+    role: "io",
+    criticality: "medium",
     notes: "Sensors, actuators, and external interfaces",
+    inputs: ["Power and control from MCU"],
+    outputs: ["Physical-world sensing/actuation"],
+    interfaces: ["Analog, digital, and connector I/O"],
+    keyComponents: ["Sensors", "Drivers", "External connectors"],
+    constraints: ["Signal integrity and load limits"],
+    failureModes: ["Noisy measurements or actuator mis-drive"],
   });
 
   return nodes;

@@ -2,14 +2,14 @@
 
 | Spec | Status | Verified | Description |
 |------|--------|----------|-------------|
-| [agent-backend](./agent-backend.md) | Implemented | Yes (2026-02-13) | Agent SDK integration, SSE streaming, retry loop, adaptive memory |
+| [agent-backend](./agent-backend.md) | Implemented | Yes (2026-02-17) | Agent SDK integration, SSE streaming, configurable repair loop, structural strategies, connectivity preflight, adaptive memory |
 | [frontend-ui](./frontend-ui.md) | Implemented | Partial (2026-02-17) | 3-panel UI with live preview, retry telemetry, todo queue, and post-validation summary |
 | [parts-search](./parts-search.md) | Implemented | Partial (2026-02-13) | JLCPCB parts search via jlcsearch API |
 | [export](./export.md) | In Progress | Partial (2026-02-13) | Circuit JSON → manufacturing files with optional KiCad/review bundle output |
 | [five-phase-workflow](./five-phase-workflow.md) | In Progress | Partial (2026-02-13) | Phase contracts, visible phase timeline, checkpoints, and review decisions |
 | [kicad-integration](./kicad-integration.md) | In Progress | Partial (2026-02-13) | `circuit-json-to-kicad` + `kicad-sch-ts` conversion, review, and MCP-style edit route |
 | [testing-strategy](./testing-strategy.md) | Implemented | Yes (2026-02-13) | Testing approach — 3-tier pyramid with live SDK tests |
-| [dynamic-repair-live-endpoint](./dynamic-repair-live-endpoint.md) | Implemented | Yes (2026-02-16) | Deterministic diagnostic routing, repair evidence SSE, and live endpoint verification contracts |
+| [dynamic-repair-live-endpoint](./dynamic-repair-live-endpoint.md) | Implemented | Yes (2026-02-17) | Deterministic diagnostic routing, structural repair strategies, repair evidence SSE, and live endpoint verification contracts |
 
 ## Status Legend
 - **Draft**: Initial spec written, not yet implemented

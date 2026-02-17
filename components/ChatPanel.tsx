@@ -151,6 +151,7 @@ const INTERNAL_TOOLS = new Set([
   "Delete",
   "EditNotebook",
   "TodoWrite",
+  "Bash",
 ]);
 
 function humanizeToolName(tool: string, input?: unknown): string | null {
@@ -168,6 +169,7 @@ function humanizeToolName(tool: string, input?: unknown): string | null {
     return `Running sub-task${inp?.description ? `: ${inp.description}` : ""}`;
   if (tool.startsWith("Subagent: ")) {
     const agent = tool.replace("Subagent: ", "");
+    if (agent === "Explore") return null;
     if (agent.includes("parts")) return "Searching component databases";
     if (agent.includes("code")) return "Writing circuit code";
     if (agent.includes("review") || agent.includes("valid"))
@@ -338,7 +340,13 @@ export function ChatPanel({
             <>
               {messages.map((message) => (
                 <Message key={message.id} from={message.role}>
-                  <MessageContent>
+                  <MessageContent
+                    className={
+                      message.role === "system"
+                        ? "rounded-md border border-accent/20 bg-accent/5 px-3 py-2 text-[13px]"
+                        : undefined
+                    }
+                  >
                     <MessageResponse>
                       {message.content || (message.role === "assistant" ? "…" : "")}
                     </MessageResponse>

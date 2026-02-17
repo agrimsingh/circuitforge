@@ -24,6 +24,17 @@ Build a working demo of CircuitForge: prompt → agent reasoning → parts searc
 - `kicad_unconnected_pin` routing tightened to treat active functional pins as `must_repair`
 - Live smoke now supports fixture-selected deterministic prompt sets and a dedicated `PIN_CONFLICT_WARNING` probe
 - 15.4% latency reduction measured on live API test
+- Architecture phase now uses low-cost Haiku synthesis for device-specific block graphs (role/criticality/interfaces/I-O/failure modes) with deterministic fallback on invalid JSON
+- Implementation loop now includes preflight structural diagnostics (source creation/trace selector/footprint), expanded targeted retry hints for `source_*` + footprint/autorouting classes, Opus-default code-writer (Sonnet override via env), and low-signal pin-conflict demotion to reduce false blocker spam
+- Retry runtime is now fully env-configurable (max attempts, stagnation/signature/autorouter limits, structural repair budget, status pulse interval) with separate test vs runtime defaults
+- Per-attempt compile/validate timeout guard (`CIRCUITFORGE_COMPILE_VALIDATE_TIMEOUT_MS`) emits non-terminal `compile_validate_timeout` diagnostics instead of killing the stream
+- Semantic connectivity preflight validates trace endpoints, selector syntax, component existence, and pin references before compile
+- Retrieval-augmented retry prompts pull diagnostic-targeted reference snippets from `docs.tscircuit.com/ai.txt`
+- Structural repair strategies (trace rebuild from net intent, layout spread via board/coordinate scaling) auto-switch after stuck-loop detection
+- Advisory diagnostics split into actionable vs low-signal for scoring and display
+- Board-fit validation emits blocking `pcb_component_out_of_bounds_error` and routes into structural layout-spread recovery
+- New `targeted_congestion_relief` intermediate strategy applies constrained board growth and bounded component nudges before escalating to full structural layout spread; escalation ladder configurable via `CIRCUITFORGE_MINOR_RELIEF_PASSES` (default 2)
+- Autorouter exhaustion fast-cutoff now requires at least one minor relief pass before triggering
 
 ## Plan of Work
 1. ~~Initialize Next.js with TypeScript, Tailwind, App Router~~

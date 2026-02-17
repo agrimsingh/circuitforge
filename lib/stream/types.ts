@@ -40,7 +40,15 @@ export interface ArchitectureNode {
   label: string;
   kind: "block" | "component" | "interface" | "power" | "net";
   status: "proposed" | "approved" | "in_progress" | "done" | "blocked";
+  role?: string;
+  criticality?: "high" | "medium" | "low";
   notes?: string;
+  inputs?: string[];
+  outputs?: string[];
+  interfaces?: string[];
+  keyComponents?: string[];
+  constraints?: string[];
+  failureModes?: string[];
   children?: string[];
   portMappings?: Array<{ from: string; to: string }>;
 }
@@ -88,6 +96,8 @@ export interface FinalSummary {
   diagnosticsCount: number;
   blockingDiagnosticsCount: number;
   warningDiagnosticsCount: number;
+  actionableWarningCount?: number;
+  lowSignalWarningCount?: number;
   openCriticalFindings: number;
   attemptsUsed: number;
   phase: DesignPhase;
@@ -104,7 +114,7 @@ export interface ValidationDiagnostic {
   message: string;
   signature: string;
   severity: number;
-  source?: "tscircuit" | "kicad";
+  source?: "agent" | "tscircuit" | "kicad";
   family?: string;
   handling?: "auto_fixable" | "should_demote" | "must_repair";
 }
@@ -114,6 +124,7 @@ export interface RepairPlanEvent {
   autoFixableFamilies: string[];
   shouldDemoteFamilies: string[];
   mustRepairFamilies: string[];
+  strategy?: "normal" | "structural_trace_rebuild" | "structural_layout_spread" | "targeted_congestion_relief";
 }
 
 export interface RepairResultEvent {

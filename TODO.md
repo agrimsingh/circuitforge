@@ -71,18 +71,43 @@
 - [x] Agent todo queue UI (TodoQueue component + Queue primitives in `components/ai-elements/queue.tsx`)
 - [x] Stream-side `TodoItem` state derived from `TodoWrite` tool_start events
 - [x] Export readiness check uses `blockingDiagnosticsCount` (advisory warnings no longer block export)
+- [x] Device-specific architecture synthesis using Haiku JSON output with heuristic fallback
 - [x] Review findings emitted after deterministic fixes (auto-fixed issues excluded)
 - [x] Review findings lifecycle sync: emit auto-closure decisions for resolved findings and preserve accepted/dismissed status on stream upserts
 - [x] Chat progress narration: stream concise state/next-step updates into the conversation during retries/validation
 - [x] End-of-run chat recap: always append assistant summary with current state, fixes made, and suggested follow-up prompts
+- [x] Mid-run chat status pinning: keep live status message at the conversation bottom during tool/retry activity
+- [x] Chat formatting polish: markdown sectioned status/recap text and styled system status cards
 - [x] Remove duplicate deterministic revalidation compile pass in retry loop
 - [x] Lazy-load adaptive guardrails only when retry prompt is needed
 - [x] Phase-scope allowed tools/subagents in `/api/agent`
 - [x] Add `callId` correlation for `tool_start`/`tool_result` SSE events
 - [x] Tighten speculative compile trigger to complete TSX fence extraction
+- [x] Detect autorouter exhaustion compile failures and route targeted retry guidance
+- [x] Add per-attempt compile/validation timeout guard (`CIRCUITFORGE_COMPILE_VALIDATE_TIMEOUT_MS`)
+- [x] Default code-writer to Opus with env-based Sonnet override (`CIRCUITFORGE_CODEGEN_MODEL`)
+- [x] Add preflight structural diagnostics for missing footprints, unresolved trace selectors, and missing chip `pinLabels`
+- [x] Demote low-signal KiCad pin conflicts (`unspecified connected to unspecified`) while keeping high-signal conflicts blocking
+- [x] Add targeted retry hints for `source_failed_to_create_component_error`, `source_trace_not_connected_error`, `pcb_missing_footprint_error`, and `pcb_autorouting_error`
 - [x] Switch export UX to single `/api/export` call using `tscircuit_code`
 - [x] Parallelize independent export artifact generation tasks
 - [x] Declutter InfoPanel tool section (grouped pipeline summary + raw drill-down)
+- [x] Add source guardrails to normalize invalid net names and strip malformed trace statements before compile/validation
+- [x] Stop retry loop early on repeated autorouter exhaustion and suppress internal `Bash`/`Explore` timeline noise
+- [x] Add retrieval-augmented retry guidance from `https://docs.tscircuit.com/ai.txt` (cached + diagnostic-targeted snippets)
+- [x] Add semantic connectivity preflight (`source_trace_missing_endpoint`, invalid selector, unknown component/pin)
+- [x] Add stuck-loop structural repair mode (trace rebuild + layout spread) with env-tunable triggers and grouped blocker summaries
+- [x] Add board-fit blocking diagnostic (`pcb_component_out_of_bounds_error`) and route it into structural layout repair
+- [x] Extract repair runtime config into env-driven `RepairRuntimeConfig` (max attempts, stagnation/signature/autorouter limits, structural budget, status pulse)
+- [x] Add per-attempt compile/validate timeout with non-terminal `compile_validate_timeout` diagnostics
+- [x] Split advisory diagnostics into actionable vs low-signal for readiness scoring and display
+- [x] Add status pulse heartbeats during long generation/validation operations
+- [x] Stabilize volatile diagnostic IDs (UUID normalization for duplicate references)
+- [x] Enrich ArchitecturePanel with role/criticality pills and I/O summaries
+- [x] Widen InfoPanel fix action to repair all open findings (not just critical)
+- [x] Add `targeted_congestion_relief` intermediate repair strategy with escalation ladder (minor relief → structural spread)
+- [x] Add `CIRCUITFORGE_MINOR_RELIEF_PASSES` / `CIRCUITFORGE_MINOR_BOARD_GROWTH_CAP_PCT` / `CIRCUITFORGE_MINOR_COMPONENT_SHIFT_MM` env vars for congestion relief tuning
+- [x] Gate autorouter exhaustion fast-cutoff behind at least one minor relief pass
 - [ ] Loading states and animations
 - [x] Mobile-responsive considerations
 - [ ] React component tests (Testing Library)

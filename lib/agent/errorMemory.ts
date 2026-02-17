@@ -44,6 +44,9 @@ function getHintForCategory(category: string) {
   if (category.includes("clearance")) {
     return "increase spacing around this area and reduce local routing density.";
   }
+  if (category.includes("autorouter_exhaustion")) {
+    return "increase board/routing margin and spread dense component clusters so the autorouter has alternate paths.";
+  }
   if (category.includes("compile")) {
     return "re-check pin labels, selector syntax, and only use valid tscircuit footprint strings.";
   }

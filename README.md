@@ -78,6 +78,22 @@ The retry loop sits outside the SDK query boundary: each attempt is a fresh `que
    - `VERCEL_OIDC_TOKEN` (for sandbox auth in local/dev)
    - `CONVEX_SITE_URL` or `NEXT_PUBLIC_CONVEX_SITE_URL`
    - `CIRCUITFORGE_CONVEX_SHARED_SECRET`
+   - `CIRCUITFORGE_COMPILE_VALIDATE_TIMEOUT_MS` (per-attempt compile/validation timeout, default `240000`)
+   - `CIRCUITFORGE_CODEGEN_MODEL` (`opus` default, set `sonnet` for faster/cheaper code-writer runs)
+   - `CIRCUITFORGE_ENABLE_CONNECTIVITY_PREFLIGHT` (`true` default)
+   - `CIRCUITFORGE_ENABLE_STRUCTURAL_REPAIR_MODE` (`true` default)
+   - `CIRCUITFORGE_MAX_REPAIR_ATTEMPTS` (`6` default in non-test runtime)
+   - `CIRCUITFORGE_RETRY_STAGNATION_LIMIT` (`4` default in non-test runtime)
+   - `CIRCUITFORGE_SIGNATURE_REPEAT_LIMIT` (`3` default in non-test runtime)
+   - `CIRCUITFORGE_AUTOROUTER_STALL_LIMIT` (consecutive autorouter-exhaustion attempts before stop, `4` default in non-test runtime)
+   - `CIRCUITFORGE_STRUCTURAL_REPAIR_TRIGGER` (`2` default)
+   - `CIRCUITFORGE_MAX_STRUCTURAL_REPAIR_ATTEMPTS` (`3` default in non-test runtime)
+   - `CIRCUITFORGE_MINOR_BOARD_GROWTH_CAP_PCT` (max board-growth cap for targeted congestion relief, default `20`)
+   - `CIRCUITFORGE_MINOR_COMPONENT_SHIFT_MM` (max per-pass component shift cap for targeted congestion relief, default `3`)
+   - `CIRCUITFORGE_MINOR_RELIEF_PASSES` (number of minor congestion-relief passes before escalating to structural spread, default `2`)
+   - `CIRCUITFORGE_STATUS_PULSE_MS` (live status heartbeat interval during long repair/validation steps, default `8000`)
+   - `CIRCUITFORGE_USE_TSCIRCUIT_AI_REFERENCE` (`true` default; set `false` to disable retrieval-augmented retry hints)
+   - `CIRCUITFORGE_STRICT_BOM_AUDIT` (`false` default; set `true` to enforce BOM properties on all designators including passives)
 
 5. Start app:
    ```bash

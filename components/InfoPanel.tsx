@@ -147,10 +147,7 @@ export function InfoPanel({
       ),
     [findingFilter, openFindings],
   );
-  const openCriticalCount = useMemo(
-    () => openFindings.filter((finding) => finding.severity === "critical").length,
-    [openFindings],
-  );
+  const openFixableCount = openFindings.length;
   const latestDiff = iterationDiffs.length > 0 ? iterationDiffs[iterationDiffs.length - 1] : null;
   const latestTimings = timingMetrics.slice(-8).reverse();
   const latestRepairPlan = repairPlans.length > 0 ? repairPlans[repairPlans.length - 1] : null;
@@ -222,10 +219,10 @@ export function InfoPanel({
       onReviewDecision(finding.id, decision);
     }
   };
-  const triggerCriticalFix = () => {
-    if (!onSend || openCriticalCount === 0) return;
+  const triggerAutoFix = () => {
+    if (!onSend || openFixableCount === 0) return;
     onSend(
-      `Fix all ${openCriticalCount} open critical review findings with minimal design changes, rerun validation, and summarize what changed.`,
+      `Fix all ${openFixableCount} open review findings with minimal design changes, prioritize blocking issues first, rerun validation, and summarize what changed.`,
     );
   };
 
@@ -298,12 +295,23 @@ export function InfoPanel({
             </h4>
             {finalSummary ? (
             <div className="rounded-md border border-border p-2 text-xs">
+              {(() => {
+                const actionableAdvisories =
+                  finalSummary.actionableWarningCount ?? finalSummary.warningDiagnosticsCount;
+                const lowSignalAdvisories = finalSummary.lowSignalWarningCount ?? 0;
+                return (
+                  <>
               <p className="text-info">
                 Readiness: <span className="font-semibold"><AnimatedScore value={finalSummary.manufacturingReadinessScore} />/100</span>
               </p>
               <p className="text-muted-foreground mt-1">
-                Diagnostics: {finalSummary.diagnosticsCount} · blocking: {finalSummary.blockingDiagnosticsCount} · warnings: {finalSummary.warningDiagnosticsCount}
+                Diagnostics: {finalSummary.diagnosticsCount} · blocking: {finalSummary.blockingDiagnosticsCount} · actionable advisories: {actionableAdvisories}
               </p>
+              {lowSignalAdvisories > 0 && (
+                <p className="text-muted-foreground">
+                  Low-signal advisories (auto-tolerated): {lowSignalAdvisories}
+                </p>
+              )}
               <p className="text-muted-foreground">
                 Open critical findings: {finalSummary.openCriticalFindings}
               </p>
@@ -317,6 +325,9 @@ export function InfoPanel({
                   ))}
                 </ul>
               )}
+                  </>
+                );
+              })()}
             </div>
           ) : null}
 
@@ -513,11 +524,11 @@ export function InfoPanel({
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={triggerCriticalFix}
-                  disabled={!onSend || openCriticalCount === 0}
+                  onClick={triggerAutoFix}
+                  disabled={!onSend || openFixableCount === 0}
                   className="h-7 px-2 text-[10px] text-info"
                 >
-                  Fix critical + rerun
+                  Fix open + rerun
                 </Button>
               </div>
 

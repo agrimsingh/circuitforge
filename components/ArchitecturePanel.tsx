@@ -19,30 +19,35 @@ interface ArchitecturePanelProps {
   blocks: ArchitectureNode[];
 }
 
-function asMermaid(nodes: ArchitectureNode[]) {
-  if (nodes.length === 0) return "graph TD\n  A[No architecture blocks yet]";
-
-  const lines = ["flowchart TD"];
-
-  for (const block of nodes) {
-    const label = `${block.id}: ${block.label}`.replaceAll('"', '\\"');
-    lines.push(`  ${block.id}["${label}"]`);
-  }
-
-  for (const block of nodes) {
-    for (const child of block.children ?? []) {
-      lines.push(`  ${block.id} --> ${child}`);
-    }
-  }
-
-  return lines.join("\n");
-}
-
 function statusPill(status: ArchitectureNode["status"]) {
   if (status === "blocked") return "text-red-300";
   if (status === "done") return "text-emerald-300";
   if (status === "in_progress") return "text-blue-300";
   return "text-[#6f8eb7]";
+}
+
+function roleStyle(role?: string) {
+  const value = role?.toLowerCase() ?? "";
+  if (value.includes("power")) return "border-amber-400/50 bg-amber-500/10 text-amber-200";
+  if (value.includes("control")) return "border-cyan-400/50 bg-cyan-500/10 text-cyan-200";
+  if (value.includes("connect") || value.includes("rf")) {
+    return "border-violet-400/50 bg-violet-500/10 text-violet-200";
+  }
+  if (value.includes("sens") || value.includes("analog")) return "border-emerald-400/50 bg-emerald-500/10 text-emerald-200";
+  if (value.includes("actuat") || value.includes("io")) return "border-rose-400/50 bg-rose-500/10 text-rose-200";
+  return "border-slate-400/40 bg-slate-500/10 text-slate-200";
+}
+
+function criticalityStyle(value?: ArchitectureNode["criticality"]) {
+  if (value === "high") return "border-red-400/50 text-red-200";
+  if (value === "medium") return "border-amber-400/50 text-amber-200";
+  if (value === "low") return "border-emerald-400/50 text-emerald-200";
+  return "border-slate-500/50 text-slate-300";
+}
+
+function compactItems(items?: string[], max = 3): string {
+  if (!items || items.length === 0) return "n/a";
+  return items.slice(0, max).join(" | ");
 }
 
 function ArchitectureGraphNode({ data }: { data: { block: ArchitectureNode } }) {
@@ -58,7 +63,22 @@ function ArchitectureGraphNode({ data }: { data: { block: ArchitectureNode } }) 
         <NodeDescription>{block.kind}</NodeDescription>
       </NodeHeader>
       <NodeContent>
+        <div className="mb-2 flex flex-wrap items-center gap-1.5">
+          {block.role ? (
+            <span className={`rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${roleStyle(block.role)}`}>
+              {block.role}
+            </span>
+          ) : null}
+          {block.criticality ? (
+            <span className={`rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${criticalityStyle(block.criticality)}`}>
+              {block.criticality}
+            </span>
+          ) : null}
+        </div>
         <p className="text-xs text-muted-foreground">{block.notes}</p>
+        <p className="mt-1 text-[11px] text-[#89a7cf]">In: {compactItems(block.inputs)}</p>
+        <p className="mt-1 text-[11px] text-[#89a7cf]">Out: {compactItems(block.outputs)}</p>
+        <p className="mt-1 text-[11px] text-[#6f8eb7]">IF: {compactItems(block.interfaces)}</p>
         <p className={`mt-1 text-xs ${statusPill(block.status)}`}>Status: {block.status}</p>
         {block.portMappings?.length ? (
           <ul className="mt-2 text-xs text-[#4a6080]">

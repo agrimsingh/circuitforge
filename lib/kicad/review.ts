@@ -17,9 +17,33 @@ export interface KicadValidationResult {
 }
 
 const BOM_REQUIRED_PROPERTIES = ["PartNumber", "Manufacturer"];
+const BOM_STRICT_MODE = /^(1|true|yes|on)$/i.test(
+  process.env.CIRCUITFORGE_STRICT_BOM_AUDIT ?? "",
+);
+const BOM_EXEMPT_PREFIXES = new Set(["R", "C"]);
 
 function asString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function extractReferencePrefix(reference: string): string | null {
+  const match = /^([A-Z]{1,4})\d+[A-Z]?$/i.exec(reference.trim());
+  return match?.[1]?.toUpperCase() ?? null;
+}
+
+function isPowerSymbolReference(reference: string): boolean {
+  return /^(GND|VCC|VDD|VSS|VBAT|VIN|VOUT|3V3|V3V3|5V|V5V|\+3V3|\+5V)$/i.test(reference.trim());
+}
+
+function shouldAuditBomReference(reference: string): boolean {
+  const normalized = reference.trim().toUpperCase();
+  if (!normalized || normalized === "UNKNOWN") return false;
+  if (isPowerSymbolReference(normalized)) return false;
+  if (!/^[A-Z]{1,4}\d+[A-Z]?$/.test(normalized)) return false;
+  if (BOM_STRICT_MODE) return true;
+  const prefix = extractReferencePrefix(normalized);
+  if (!prefix) return false;
+  return !BOM_EXEMPT_PREFIXES.has(prefix);
 }
 
 function normalizeCategory(item: UnknownRecord): string {
@@ -51,6 +75,13 @@ export function resolveDiagnosticFamily(category: string, message?: string): str
   const normalizedMessage = (message ?? "").trim().toLowerCase();
   const combined = `${normalizedCategory} ${normalizedMessage}`;
 
+  const lowSignalPinConflict =
+    combined.includes("pin conflict") &&
+    combined.includes("unspecified connected to unspecified");
+  if (lowSignalPinConflict) {
+    return "pin_conflict_low_signal";
+  }
+
   if (combined.includes("kicad_unconnected_pin") || combined.includes("unconnected pin")) {
     return "kicad_unconnected_pin";
   }
@@ -72,6 +103,25 @@ export function resolveDiagnosticFamily(category: string, message?: string): str
   }
   if (combined.includes("duplicate_reference")) {
     return "duplicate_reference";
+  }
+  if (
+    combined.includes("pcb_component_out_of_bounds_error") ||
+    combined.includes("out_of_bounds")
+  ) {
+    return "pcb_component_out_of_bounds_error";
+  }
+  if (
+    combined.includes("pcb_autorouter_exhaustion") ||
+    combined.includes("pcb_autorouting_error") ||
+    combined.includes("all solvers failed") ||
+    combined.includes("ran out of candidates") ||
+    combined.includes("capacity-autorouter") ||
+    combined.includes("capacity-mesh-autorouting")
+  ) {
+    return "pcb_autorouter_exhaustion";
+  }
+  if (combined.includes("compile_validate_timeout")) {
+    return "compile_validate_timeout";
   }
   if (combined.includes("compile_error") || combined.includes("compile")) {
     return "compile_error";
@@ -155,7 +205,7 @@ function adjustErcSeverityForKnownNonBlocking(
 
   const normalizedMessage = message.toLowerCase();
   const isPowerSymbolDuplicate =
-    /\b(gnd|vcc|vdd|vss|3v3|5v|\+3v3|\+5v)\b/.test(normalizedMessage);
+    /\b(gnd|vcc|vdd|vss|3v3|v3v3|5v|v5v|\+3v3|\+5v)\b/.test(normalizedMessage);
   if (isPowerSymbolDuplicate) return Math.min(baseSeverity, 4);
   return Math.min(baseSeverity, 6);
 }
@@ -354,6 +404,7 @@ async function runBomAudit(
     if (Array.isArray(issues)) {
       for (const issue of issues as UnknownRecord[]) {
         const reference = asString(issue.reference) ?? "unknown";
+        if (!shouldAuditBomReference(reference)) continue;
         const missing = Array.isArray(issue.missingProperties)
           ? issue.missingProperties
               .map((value) => asString(value) ?? String(value))
@@ -369,6 +420,7 @@ async function runBomAudit(
         );
       }
       metadata.bom_audit_issues = issues.length;
+      metadata.bom_audit_scoped_issues = findings.length;
     }
   } finally {
     await rm(tempDir, { recursive: true, force: true });

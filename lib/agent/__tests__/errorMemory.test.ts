@@ -70,4 +70,27 @@ describe("errorMemory", () => {
     expect(stats.sampleCount).toBe(0);
     expect(getAdaptiveGuardrails()).toBe("");
   });
+
+  it("includes autorouter exhaustion hint in adaptive guardrails", () => {
+    recordDiagnosticsSample([
+      {
+        category: "pcb_autorouter_exhaustion",
+        message: "All solvers failed in hyper solver",
+        signature: "a",
+        severity: 10,
+      },
+    ]);
+    recordDiagnosticsSample([
+      {
+        category: "pcb_autorouter_exhaustion",
+        message: "Ran out of candidates",
+        signature: "b",
+        severity: 10,
+      },
+    ]);
+
+    const guardrails = getAdaptiveGuardrails();
+    expect(guardrails).toContain("pcb_autorouter_exhaustion");
+    expect(guardrails).toContain("increase board/routing margin");
+  });
 });

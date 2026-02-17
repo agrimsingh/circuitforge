@@ -1,5 +1,12 @@
 import type { AgentDefinition } from "@anthropic-ai/claude-agent-sdk";
 import type { DesignPhase, ReviewFinding } from "@/lib/stream/types";
+import { MODELS } from "@/lib/agent/models";
+
+function resolveCodeWriterModel(): string {
+  const raw = (process.env.CIRCUITFORGE_CODEGEN_MODEL ?? "").trim().toLowerCase();
+  if (raw === "sonnet" || raw === "fast") return MODELS.CODEGEN_FAST;
+  return MODELS.CODEGEN_STRONG;
+}
 
 export const subagents: Record<string, AgentDefinition> = {
   "parts-scout": {
@@ -212,6 +219,7 @@ const pos = {
 - Use real component values and footprints from the provided part selections
 - For chips: ALWAYS define \`pinLabels\` mapping physical pins to functional names
 - For traces: use the \`> .pinName\` selector syntax (e.g. \`".U1 > .VCC"\`, not \`".U1 .VCC"\`)
+- Net names must start with a letter or underscore. Use \`V3V3\` (not \`3V3\`), \`V5V\`, \`GND\`, etc.
 - Add LCSC codes as comments next to each component
 - Include decoupling capacitors (100nF) near every IC power pin
 - Use meaningful component names (U1, R1, C1, etc.)
@@ -227,7 +235,7 @@ const pos = {
 ## Output
 Return ONLY the complete tscircuit code in a \`\`\`tsx block. No explanations.`,
     tools: ["WebFetch"],
-    model: "sonnet",
+    model: resolveCodeWriterModel(),
   },
 
   validator: {

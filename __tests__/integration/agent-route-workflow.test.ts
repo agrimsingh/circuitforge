@@ -176,7 +176,11 @@ describe("Agent route — workflow coverage", () => {
     expect(lastRetry?.type).toBe("retry_result");
     if (lastRetry?.type === "retry_result") {
       expect(lastRetry.status).toBe("failed");
-      expect(["stagnant_signature", "max_attempts"]).toContain(lastRetry.reason);
+      expect([
+        "stagnant_signature",
+        "max_attempts",
+        "structural_repair_exhausted",
+      ]).toContain(lastRetry.reason);
     }
 
     expect(events.some((event) => event.type === "iteration_diff")).toBe(true);
@@ -185,4 +189,3 @@ describe("Agent route — workflow coverage", () => {
     expect(events.some((event) => event.type === "done")).toBe(true);
   });
 });
-

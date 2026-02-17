@@ -262,6 +262,9 @@ const initialState: AgentStreamState = {
 function buildRunRecapMessage(state: AgentStreamState): string | null {
   const summary = state.finalSummary;
   if (!summary) return null;
+  const actionableAdvisories =
+    summary.actionableWarningCount ?? summary.warningDiagnosticsCount;
+  const lowSignalAdvisories = summary.lowSignalWarningCount ?? 0;
 
   const autoFixedTotal = state.repairResults.reduce(
     (sum, item) => sum + (item.autoFixedCount ?? 0),
@@ -283,20 +286,23 @@ function buildRunRecapMessage(state: AgentStreamState): string | null {
           "Suggested prompt: `Generate manufacturing notes and BOM sanity checks before export.`",
         ]
       : [
-          "Ask me to continue repair on the remaining blockers.",
-          "Suggested prompt: `Fix remaining blocking findings and rerun validation.`",
-          "Suggested prompt: `Prioritize PIN_CONFLICT_WARNING issues, then rerun validation.`",
+          "Automatic repair budget was exhausted for this run.",
+          "Remaining blockers are listed above for traceability.",
+          "Backend repair will continue autonomously within the configured attempt budget on each run.",
         ];
 
   return [
-    "Run recap:",
-    `- Phase: ${summary.phase}`,
-    `- Readiness: ${summary.manufacturingReadinessScore}/100`,
-    `- Diagnostics: ${summary.diagnosticsCount} total (${summary.blockingDiagnosticsCount} blocking, ${summary.warningDiagnosticsCount} advisory)`,
-    `- Auto-fixed issues this run: ${autoFixedTotal}`,
+    "## Run Recap",
+    "",
+    "### Current State",
+    `- **Phase:** ${summary.phase}`,
+    `- **Readiness:** ${summary.manufacturingReadinessScore}/100`,
+    `- **Diagnostics:** ${summary.diagnosticsCount} total (${summary.blockingDiagnosticsCount} blocking, ${actionableAdvisories} actionable advisory${lowSignalAdvisories > 0 ? `, ${lowSignalAdvisories} low-signal advisory` : ""})`,
+    `- **Auto-fixed issues this run:** ${autoFixedTotal}`,
     `- ${flowLine}`,
     `- ${repairLine}`,
-    "Next actions:",
+    "",
+    "### Next Actions",
     ...nextSteps.map((line) => `- ${line}`),
   ].join("\n");
 }
@@ -312,6 +318,7 @@ export function useAgentStream() {
   const systemEventCounterRef = useRef(0);
   const statusMessageIdRef = useRef<string | null>(null);
   const statusLogRef = useRef<string[]>([]);
+  const lastLiveStatusAtRef = useRef(0);
   const lastStateRef = useRef(initialState);
 
   useEffect(() => {
@@ -327,28 +334,40 @@ export function useAgentStream() {
 
   const nextMessageId = () => `msg-${messageCounterRef.current++}`;
 
-  const pushStatusLine = (line: string) => {
+  const pushStatusLine = (line: string, opts?: { force?: boolean }) => {
     const trimmed = line.trim();
     if (!trimmed) return;
+    const now = Date.now();
+    if (!opts?.force && now - lastLiveStatusAtRef.current < 1500) return;
+    lastLiveStatusAtRef.current = now;
     const last = statusLogRef.current[statusLogRef.current.length - 1];
     if (last === trimmed) return;
     statusLogRef.current = [...statusLogRef.current.slice(-7), trimmed];
 
     const statusMessageId = statusMessageIdRef.current;
     if (!statusMessageId) return;
-    const content = [`Progress update:`, ...statusLogRef.current.map((entry) => `- ${entry}`)].join("\n");
+    const content = [
+      "## Live Status",
+      "",
+      ...statusLogRef.current.map((entry) => `- ${entry}`),
+    ].join("\n");
 
     setState((prev) => {
       const idx = prev.messages.findIndex((msg) => msg.id === statusMessageId);
+      const withoutStatus =
+        idx >= 0
+          ? [...prev.messages.slice(0, idx), ...prev.messages.slice(idx + 1)]
+          : prev.messages;
       if (idx === -1) {
         return {
           ...prev,
-          messages: [...prev.messages, { id: statusMessageId, role: "system", content }],
+          messages: [...withoutStatus, { id: statusMessageId, role: "system", content }],
         };
       }
-      const nextMessages = [...prev.messages];
-      nextMessages[idx] = { ...nextMessages[idx], content };
-      return { ...prev, messages: nextMessages };
+      return {
+        ...prev,
+        messages: [...withoutStatus, { id: statusMessageId, role: "system", content }],
+      };
     });
   };
 
@@ -391,6 +410,7 @@ export function useAgentStream() {
     }));
 
     statusLogRef.current = [];
+    lastLiveStatusAtRef.current = 0;
     const statusMessageId = nextMessageId();
     statusMessageIdRef.current = statusMessageId;
     setState((prev) => ({
@@ -400,7 +420,7 @@ export function useAgentStream() {
         {
           id: statusMessageId,
           role: "system",
-          content: "Progress update:\n- Starting run and loading previous context.",
+          content: "## Live Status\n\n- Starting run and loading previous context.",
         },
       ],
     }));
@@ -511,6 +531,9 @@ export function useAgentStream() {
 
             case "tool_start": {
               appendActivity(`→ ${event.tool}${event.input ? ` (${JSON.stringify(event.input).slice(0, 80)})` : ""}`);
+              if (event.tool !== "TodoWrite") {
+                pushStatusLine(`Running tool: \`${event.tool}\``);
+              }
 
               if (event.tool === "TodoWrite") {
                 const inp = event.input as { todos?: TodoItem[]; merge?: boolean } | undefined;
@@ -583,6 +606,7 @@ export function useAgentStream() {
 
             case "subagent_start": {
               appendActivity(`▸ Starting ${event.agent}`);
+              pushStatusLine(`Subagent started: \`${event.agent}\``);
               const id = `tool-${toolCounterRef.current++}`;
               setState((prev) => ({
                 ...prev,
@@ -601,6 +625,7 @@ export function useAgentStream() {
 
             case "subagent_stop": {
               appendActivity(`✓ ${event.agent} done`);
+              pushStatusLine(`Subagent finished: \`${event.agent}\``);
               setState((prev) => {
                 const events = [...prev.toolEvents];
                 for (let i = events.length - 1; i >= 0; i--) {
@@ -620,7 +645,7 @@ export function useAgentStream() {
 
             case "phase_entered": {
               appendActivity(`Phase: ${event.phase}`);
-              pushStatusLine(`Entered ${event.phase} phase.`);
+              pushStatusLine(`Entered **${event.phase}** phase.`, { force: true });
               setState((prev) => ({
                 ...prev,
                 phase: event.phase,
@@ -638,7 +663,7 @@ export function useAgentStream() {
             }
 
             case "phase_progress": {
-              pushStatusLine(`${event.phase}: ${event.message}`);
+              pushStatusLine(`**${event.phase}**: ${event.message}`);
               setState((prev) => ({
                 ...prev,
                 phase: event.phase,
@@ -672,7 +697,7 @@ export function useAgentStream() {
 
             case "gate_passed": {
               appendActivity(`✅ ${event.gate}: ${event.message}`);
-              pushStatusLine(`${event.phase}: gate passed (${event.gate}). ${event.message}`);
+              pushStatusLine(`**${event.phase}**: gate passed (\`${event.gate}\`). ${event.message}`, { force: true });
               setState((prev) => ({
                 ...prev,
                 phaseSteps: applyPhaseUpdate(
@@ -700,7 +725,7 @@ export function useAgentStream() {
 
             case "gate_blocked": {
               appendActivity(`🛑 ${event.gate} blocked: ${event.reason}`);
-              pushStatusLine(`${event.phase}: gate blocked (${event.gate}). Next: apply repairs and retry.`);
+              pushStatusLine(`**${event.phase}**: gate blocked (\`${event.gate}\`). Next: apply repairs and retry.`, { force: true });
               setState((prev) => ({
                 ...prev,
                 phaseSteps: applyPhaseUpdate(
@@ -751,7 +776,7 @@ export function useAgentStream() {
 
             case "review_decision": {
               const decision = event.decision;
-              pushStatusLine(`Finding ${decision.findingId} marked ${decision.decision}.`);
+              pushStatusLine(`Finding \`${decision.findingId}\` marked **${decision.decision}**.`);
               setState((prev) => ({
                 ...prev,
                 reviewFindings: setFindingDecision(prev.reviewFindings, decision),
@@ -780,11 +805,14 @@ export function useAgentStream() {
             }
 
             case "final_summary": {
+              const actionableAdvisories =
+                event.summary.actionableWarningCount ?? event.summary.warningDiagnosticsCount;
               appendActivity(
                 `Final readiness: ${event.summary.manufacturingReadinessScore}/100 (open critical: ${event.summary.openCriticalFindings})`
               );
               pushStatusLine(
-                `Summary: readiness ${event.summary.manufacturingReadinessScore}/100, blocking diagnostics ${event.summary.blockingDiagnosticsCount}.`
+                `Summary: readiness **${event.summary.manufacturingReadinessScore}/100**, blocking diagnostics **${event.summary.blockingDiagnosticsCount}**, actionable advisories **${actionableAdvisories}**.`,
+                { force: true },
               );
               setState((prev) => ({
                 ...prev,
@@ -831,7 +859,7 @@ export function useAgentStream() {
                 `Repair result A${event.result.attempt}: blocking ${event.result.blockingBefore} -> ${event.result.blockingAfter}`
               );
               pushStatusLine(
-                `Attempt ${event.result.attempt}: blocking ${event.result.blockingBefore} -> ${event.result.blockingAfter}, auto-fixed ${event.result.autoFixedCount}.`
+                `Attempt ${event.result.attempt}: blocking ${event.result.blockingBefore} -> ${event.result.blockingAfter}, auto-fixed ${event.result.autoFixedCount}.`,
               );
               setState((prev) => ({
                 ...prev,
@@ -857,7 +885,7 @@ export function useAgentStream() {
             }
 
             case "error": {
-              pushStatusLine(`Run failed: ${event.message}`);
+              pushStatusLine(`Run failed: ${event.message}`, { force: true });
               setState((prev) => ({
                 ...prev,
                 error: event.message,
@@ -868,7 +896,7 @@ export function useAgentStream() {
 
             case "done": {
               receivedDoneRef.current = true;
-              pushStatusLine("Run complete.");
+              pushStatusLine("Run complete.", { force: true });
               setState((prev) => {
                 const recap = buildRunRecapMessage(prev);
                 return {
@@ -886,7 +914,8 @@ export function useAgentStream() {
             case "retry_start": {
               appendActivity(`↻ Retry attempt ${event.attempt}/${event.maxAttempts}`);
               pushStatusLine(
-                `Validation attempt ${event.attempt}/${event.maxAttempts} started. Next: inspect diagnostics and apply fixes.`
+                `Validation attempt ${event.attempt}/${event.maxAttempts} started. Next: inspect diagnostics and apply fixes.`,
+                { force: true },
               );
               setState((prev) => ({
                 ...prev,
@@ -903,7 +932,8 @@ export function useAgentStream() {
             case "validation_errors": {
               appendActivity(`⚠ Validation: ${event.diagnostics.length} issue(s)`);
               pushStatusLine(
-                `Attempt ${event.attempt}: found ${event.diagnostics.length} issue(s). Next: patch and rerun validation.`
+                `Attempt ${event.attempt}: found ${event.diagnostics.length} issue(s). Next: patch and rerun validation.`,
+                { force: true },
               );
               setState((prev) => {
                 const current = ensureRetryTelemetry(prev.retryTelemetry);
@@ -946,7 +976,8 @@ export function useAgentStream() {
                   ? `Attempt ${event.attempt}: validation clean.`
                   : event.status === "failed"
                     ? `Attempt ${event.attempt}: retry loop stopped with ${event.diagnosticsCount} issue(s) remaining.`
-                    : `Attempt ${event.attempt}: continuing repair loop (${event.diagnosticsCount} issue(s) left).`
+                    : `Attempt ${event.attempt}: continuing repair loop (${event.diagnosticsCount} issue(s) left).`,
+                { force: true },
               );
               setState((prev) => ({
                 ...prev,
@@ -966,7 +997,7 @@ export function useAgentStream() {
       }
 
       if (!receivedDoneRef.current) {
-        pushStatusLine("Connection ended before completion. Last response may be partial.");
+        pushStatusLine("Connection ended before completion. Last response may be partial.", { force: true });
         setState((prev) => ({
           ...prev,
           isStreaming: false,
@@ -977,7 +1008,7 @@ export function useAgentStream() {
       }
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
-      pushStatusLine(`Run failed: ${err instanceof Error ? err.message : "Unknown error"}`);
+      pushStatusLine(`Run failed: ${err instanceof Error ? err.message : "Unknown error"}`, { force: true });
       setState((prev) => ({
         ...prev,
         error: err instanceof Error ? err.message : "Unknown error",
