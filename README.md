@@ -22,6 +22,26 @@ CircuitForge is a self-correcting, self-improving circuit design agent. You desc
 
 The result: you get a validated, manufacturable circuit -- not a first draft you have to babysit.
 
+### Auto-Healing in Action (Demo Snapshot)
+
+In a live hackathon demo, the first generated nRF52832 design failed validation because the QFN48 pin map was incomplete (missing pin labels 38-48 and referencing `VDD3` without a matching mapping).
+
+On the next repair pass, CircuitForge:
+
+1. Added missing `pinLabels` for pins 38-48 (including explicit `NC` placeholders where appropriate).
+2. Removed invalid `VDD3` references from `schPinArrangement` and kept only mapped rails.
+3. Rebalanced placement to reduce dense routing congestion before rerunning checks.
+
+Result of the autonomous retry loop:
+
+- Blocking diagnostics: `0`
+- Actionable advisories: `1`
+- Low-signal advisories auto-tolerated: `17`
+- Auto-fixed issues in run: `322`
+- Manufacturing readiness: `90/100`
+
+This is the default behavior: fail, diagnose, patch, and re-validate until the design is export-safe or a clear stopping condition is reached.
+
 ### How Self-Learning Works
 
 Every validation failure is decomposed into error categories (`pcb_trace_error`, `via_clearance`, etc.). Each category is tracked with an exponentially weighted moving average (7-day half-life) so recent failures rank higher than old ones. Before each generation attempt, the top recurring categories are pulled back as guardrails injected into the agent's retry prompt — with actionable hints like "spread different-net vias apart" or "increase spacing and reduce routing density."
